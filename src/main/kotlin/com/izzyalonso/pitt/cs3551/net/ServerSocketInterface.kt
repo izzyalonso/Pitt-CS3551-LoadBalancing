@@ -1,6 +1,7 @@
 package com.izzyalonso.pitt.cs3551.net
 
 import com.izzyalonso.pitt.cs3551.model.Message
+import com.izzyalonso.pitt.cs3551.util.Logger
 import java.io.*
 import java.net.ServerSocket
 import java.net.Socket
@@ -45,19 +46,18 @@ class ServerSocketInterface @JvmOverloads constructor(private val listener: List
                     try { // <- For the timer loop exception
                         val clientSocket = serverSocket.accept()
 
-                        // Incoming connection, delegating to new thread
-                        Thread {
+                        Thread { // Incoming connection, offloading to a new thread
                             try { // <- to separate IOExceptions I don't really care about from invalid messages
                                 for (input in clientSocket.bufferedReader().lines()) {
                                     try { // <- Invalid messages, most likely a programmer error
                                         // Parse and deliver the message, along with the socket in a separate thread
                                         val message = Message.fromJson(input)
-                                        println(message)
+                                        Logger.d(message)
                                         listener.onMessageReceived(message, clientSocket)
                                         break // <- one line per incoming connection
                                     } catch (x: Exception) {
-                                        println("Received invalid message:")
-                                        println(input)
+                                        Logger.d("Received invalid message:")
+                                        Logger.d(input)
                                     }
                                 }
                             } catch (iox: IOException) {

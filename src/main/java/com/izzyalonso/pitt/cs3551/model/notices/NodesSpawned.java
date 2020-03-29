@@ -10,7 +10,7 @@ import java.util.List;
 
 @AutoValue
 public abstract class NodesSpawned extends JsonConvertible {
-    abstract List<NodeInfo> nodes();
+    public abstract List<NodeInfo> nodes();
 
     public static NodesSpawned create(List<NodeInfo> nodes) {
         return new AutoValue_NodesSpawned(nodes);

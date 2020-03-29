@@ -27,25 +27,30 @@ fun Socket.sendAndClose(message: Message) = printWriter().use { writer ->
 }
 
 /**
- * Sends a message through a socket.
+ * Sends a [message] to a machine at the provided [address] and [port] asynchronously. Optionally, you can register
+ * a [callback] to get notified iff and when the recipient sends a response.
  */
-fun send(message: Message, socket: Socket) {
-    socket.printWriter().use { writer ->
-        writer.println(message.toJson())
-    }
+fun sendAsync(message: Message, address: String, port: Int, callback: MessageCallback? = null) {
+    Thread {
+        send(message, address, port)?.let {
+            callback?.onResponseReceived(it)
+        }
+    }.start()
 }
 
+/**
+ * Sends a [message] to a machine at the provided [address] and [port] synchronously.
+ */
 fun send(message: Message, address: String, port: Int): Message? {
     try {
         Socket(address, port).use { socket ->
-            socket.printWriter().use { out ->
+            socket.printWriter().let { out ->
                 // Send the message
                 out.println(message.toJson())
 
-                // Try reading a response
-                try {
-                    socket.bufferedReader().use { reader ->
-                        // If the other end closes the connection the line will be null, signaling the end of the stream
+                try { // Try reading a response
+                    socket.bufferedReader().let { reader ->
+                        // If the other end closes the connection the line will be null
                         val line = reader.readLine()
                         if (line != null) {
                             // Read and deliver the response
@@ -63,4 +68,14 @@ fun send(message: Message, address: String, port: Int): Message? {
 
     // No message to return
     return null
+}
+
+/**
+ * Callback for async send operations. Because TCP ensures delivery ans we know the protocol we don't need a
+ * delivered function. We'll assume the message got to its destination. If timing is a concern (ie. you need
+ * to know when an operation completes), please ensure the recipient sends an acknowledgement message back or
+ * somehow build that into the protocol.
+ */
+interface MessageCallback {
+    fun onResponseReceived(response: Message)
 }

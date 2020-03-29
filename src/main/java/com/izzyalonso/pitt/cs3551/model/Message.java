@@ -5,8 +5,8 @@ import com.google.gson.Gson;
 import com.google.gson.TypeAdapter;
 import com.izzyalonso.pitt.cs3551.annotation.NonNull;
 import com.izzyalonso.pitt.cs3551.annotation.Nullable;
+import com.izzyalonso.pitt.cs3551.model.commands.BuildTree;
 import com.izzyalonso.pitt.cs3551.model.commands.DoWork;
-import com.izzyalonso.pitt.cs3551.model.commands.PrepareToBuildTree;
 import com.izzyalonso.pitt.cs3551.model.commands.SendNodeInfo;
 import com.izzyalonso.pitt.cs3551.model.commands.controller.KillNodes;
 import com.izzyalonso.pitt.cs3551.model.commands.controller.SpinUpNodes;
@@ -26,7 +26,7 @@ public abstract class Message extends JsonConvertible {
     @Nullable public abstract ResponseMessage responseMessage();
 
     // Messages for a node
-    @Nullable public abstract PrepareToBuildTree prepareToBuildTree();
+    @Nullable public abstract BuildTree buildTree();
     @Nullable public abstract SendNodeInfo sendNodeInfo();
     @Nullable public abstract DoWork doWork();
 
@@ -59,8 +59,8 @@ public abstract class Message extends JsonConvertible {
         return builder().responseMessage(responseMessage).build();
     }
 
-    public static Message create(@NonNull PrepareToBuildTree prepareToBuildTree) {
-        return builder().prepareToBuildTree(prepareToBuildTree).build();
+    public static Message create(@NonNull BuildTree buildTree) {
+        return builder().buildTree(buildTree).build();
     }
 
     /**
@@ -88,7 +88,7 @@ public abstract class Message extends JsonConvertible {
         abstract Builder nodesSpawned(@Nullable NodesSpawned nodesSpawned);
         abstract Builder responseMessage(@Nullable ResponseMessage responseMessage);
 
-        abstract Builder prepareToBuildTree(@Nullable PrepareToBuildTree prepareToBuildTree);
+        abstract Builder buildTree(@Nullable BuildTree buildTree);
         abstract Builder sendNodeInfo(@Nullable SendNodeInfo sendNodeInfo);
         abstract Builder doWork(@Nullable DoWork doWork);
 

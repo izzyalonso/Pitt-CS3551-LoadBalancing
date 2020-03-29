@@ -1,5 +1,6 @@
 package com.izzyalonso.pitt.cs3551
 
+import com.izzyalonso.pitt.cs3551.annotation.VisibleForInnerAccess
 import com.izzyalonso.pitt.cs3551.model.Message
 import com.izzyalonso.pitt.cs3551.model.notices.NodeOnline
 import com.izzyalonso.pitt.cs3551.net.ServerSocketInterface
@@ -27,5 +28,12 @@ class Node {
 
             }
         }).startListening()
+    }
+
+    @VisibleForInnerAccess
+    internal fun handleMessage(message: Message, socket: Socket) {
+        message.buildTree()?.let { buildTree ->
+
+        }
     }
 }
