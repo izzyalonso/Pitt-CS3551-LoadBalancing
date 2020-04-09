@@ -46,17 +46,22 @@ by the controller.
 
 ### Node
 
-A node is a machine that performs work in the system. Details to come. Planned supported
-operations are the following. Pending revision.
+A node is a machine that performs work in the system. A node listens asynchronously for
+messages from other nodes while executing work it has queued. When the queue is empty, 
+the thread running all the work goes to sleep until more work or a key event arrives. 
+This is achieved with simple locks. The node keeps track of what fraction of the time
+it's been doing work or asleep to calculate a load factor. Supported operations are
+the following (still pending revision)
 
-#### Build Tree
+#### Build Hierarchy
 
 Instructs the node to create the load balancing hierarchy and inform the all other nodes
-of the output of the operation.
+of the output of the operation. This creates a complete tree having all nodes as leaves.
 
 #### Do work
 
-Queues some work in a node.
+Queues some work in a node. The three types of jobs are calculating the nth fibonacci
+number, whether the nth number is prime or not, and n squared using sums of 1.
 
 #### Get Load / Send Load
 

@@ -139,7 +139,7 @@ class NodeController(private val port: Int?) {
     }
 
     /**
-     * Tells whether a [NodeCollector] is working. A non existent [NodeCollector] is, by definition, not working.
+     * Tells whether a [NodeCollector] is working. A non existent node collector is, by definition, not working.
      */
     private fun NodeCollector?.isWorking() = this?.isWorking() ?: false
 }

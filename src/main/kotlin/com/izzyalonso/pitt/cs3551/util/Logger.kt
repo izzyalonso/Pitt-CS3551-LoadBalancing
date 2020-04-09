@@ -20,7 +20,7 @@ object Logger {
     /**
      * Info log. Always prints.
      */
-    fun i(message: Any) = synchronized(this) {
+    fun i(message: Any?) = synchronized(this) {
         println(message)
     }
 }

@@ -5,7 +5,7 @@ import com.google.gson.Gson;
 import com.google.gson.TypeAdapter;
 import com.izzyalonso.pitt.cs3551.annotation.NonNull;
 import com.izzyalonso.pitt.cs3551.annotation.Nullable;
-import com.izzyalonso.pitt.cs3551.model.commands.BuildTree;
+import com.izzyalonso.pitt.cs3551.model.commands.BuildHierarchy;
 import com.izzyalonso.pitt.cs3551.model.commands.DoWork;
 import com.izzyalonso.pitt.cs3551.model.commands.SendNodeInfo;
 import com.izzyalonso.pitt.cs3551.model.commands.controller.KillNodes;
@@ -26,9 +26,11 @@ public abstract class Message extends JsonConvertible {
     @Nullable public abstract ResponseMessage responseMessage();
 
     // Messages for a node
-    @Nullable public abstract BuildTree buildTree();
+    @Nullable public abstract BuildHierarchy buildHierarchy();
     @Nullable public abstract SendNodeInfo sendNodeInfo();
-    @Nullable public abstract DoWork doWork();
+    @Nullable public abstract Work doWork();
+
+    @Nullable public abstract TreeNode hierarchy();
 
 
     private static Builder builder() {
@@ -59,8 +61,12 @@ public abstract class Message extends JsonConvertible {
         return builder().responseMessage(responseMessage).build();
     }
 
-    public static Message create(@NonNull BuildTree buildTree) {
-        return builder().buildTree(buildTree).build();
+    public static Message create(@NonNull BuildHierarchy buildHierarchy) {
+        return builder().buildHierarchy(buildHierarchy).build();
+    }
+
+    public static Message create(@NonNull TreeNode hierarchy) {
+        return builder().hierarchy(hierarchy).build();
     }
 
     /**
@@ -88,9 +94,11 @@ public abstract class Message extends JsonConvertible {
         abstract Builder nodesSpawned(@Nullable NodesSpawned nodesSpawned);
         abstract Builder responseMessage(@Nullable ResponseMessage responseMessage);
 
-        abstract Builder buildTree(@Nullable BuildTree buildTree);
+        abstract Builder buildHierarchy(@Nullable BuildHierarchy buildHierarchy);
         abstract Builder sendNodeInfo(@Nullable SendNodeInfo sendNodeInfo);
-        abstract Builder doWork(@Nullable DoWork doWork);
+        abstract Builder doWork(@Nullable Work doWork);
+
+        abstract Builder hierarchy(@Nullable TreeNode hierarchy);
 
         abstract Message build();
     }

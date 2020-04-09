@@ -7,9 +7,4 @@ public abstract class JsonConvertible {
     public String toJson() {
         return ModelTypeAdapterFactory.toJson(this);
     }
-
-    @Override
-    public String toString() {
-        return toJson();
-    }
 }

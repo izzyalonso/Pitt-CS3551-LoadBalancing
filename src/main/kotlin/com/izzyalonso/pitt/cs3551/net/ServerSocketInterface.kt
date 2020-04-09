@@ -52,7 +52,7 @@ class ServerSocketInterface @JvmOverloads constructor(private val listener: List
                                     try { // <- Invalid messages, most likely a programmer error
                                         // Parse and deliver the message, along with the socket in a separate thread
                                         val message = Message.fromJson(input)
-                                        Logger.d(message)
+                                        Logger.d(message.toJson())
                                         listener.onMessageReceived(message, clientSocket)
                                         break // <- one line per incoming connection
                                     } catch (x: Exception) {

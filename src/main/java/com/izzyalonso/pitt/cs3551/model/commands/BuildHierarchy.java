@@ -9,15 +9,15 @@ import com.izzyalonso.pitt.cs3551.model.NodeInfo;
 import java.util.List;
 
 @AutoValue
-public abstract class BuildTree extends JsonConvertible {
+public abstract class BuildHierarchy extends JsonConvertible {
     public abstract int branchingFactor();
     public abstract List<NodeInfo> nodes();
 
-    public BuildTree create(int branchingFactor, List<NodeInfo> nodes) {
-        return new AutoValue_BuildTree(branchingFactor, nodes);
+    public static BuildHierarchy create(int branchingFactor, List<NodeInfo> nodes) {
+        return new AutoValue_BuildHierarchy(branchingFactor, nodes);
     }
 
-    public static TypeAdapter<BuildTree> typeAdapter(Gson gson) {
-        return new AutoValue_BuildTree.GsonTypeAdapter(gson);
+    public static TypeAdapter<BuildHierarchy> typeAdapter(Gson gson) {
+        return new AutoValue_BuildHierarchy.GsonTypeAdapter(gson);
     }
 }

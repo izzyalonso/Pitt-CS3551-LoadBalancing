@@ -6,24 +6,29 @@ import com.google.gson.TypeAdapter;
 import com.izzyalonso.pitt.cs3551.annotation.NonNull;
 import com.izzyalonso.pitt.cs3551.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
 
 
 @AutoValue
 public abstract class TreeNode extends JsonConvertible {
-    abstract NodeInfo leader();
+    public abstract NodeInfo node();
     @Nullable
-    abstract NodeInfo parent();
-    @Nullable abstract List<TreeNode> children();
+    public abstract NodeInfo parent(); // <- null at the root
+    public abstract List<TreeNode> children(); // <- empty at the leafs
 
-    @NonNull
-    static TreeNode createLeaf(@NonNull NodeInfo leader) {
-        return null;//new AutoValue_TreeNode(leader, null);
+    public boolean isLeaf() {
+        return children().isEmpty();
     }
 
     @NonNull
-    static TreeNode create(@NonNull NodeInfo leader, @NonNull List<TreeNode> children) {
-        return null;//new AutoValue_TreeNode(leader, children);
+    public TreeNode assignParent(@NonNull NodeInfo parent) {
+        return new AutoValue_TreeNode(node(), parent, children());
+    }
+
+    @NonNull
+    public static TreeNode create(@NonNull NodeInfo node) {
+        return new AutoValue_TreeNode(node, null, new ArrayList<>());
     }
 
     public static TypeAdapter<TreeNode> typeAdapter(Gson gson) {
