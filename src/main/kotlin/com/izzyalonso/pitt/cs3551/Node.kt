@@ -29,10 +29,14 @@ class Node {
     // The hierarchy this node is in charge of
     private lateinit var hierarchy: TreeNode
 
+    private lateinit var loadTracker: LoadTracker
+
 
     fun start() {
         println("Starting node.")
         running.set(true)
+
+        loadTracker = LoadTracker()
 
         val controllerPort = System.getenv()[NodeController.ENV_CONTROLLER_PORT]?.toInt()
         if (controllerPort == null) {
@@ -66,10 +70,16 @@ class Node {
                 work = queue.removeFirstOrNull()
             }
 
-            work?.let {
-                doWork(it) // Execute work if we have any
-            } ?: workLock.wait() // Go to sleep otherwise
+            if (work == null) {
+                loadTracker.startSleep()
+                workLock.wait() // Go to sleep
+            } else {
+                loadTracker.startWork()
+                doWork(work) // Execute the request
+            }
         }
+
+        loadTracker.done()
     }
 
     private fun doWork(work: Work) = when (work.type()) {
