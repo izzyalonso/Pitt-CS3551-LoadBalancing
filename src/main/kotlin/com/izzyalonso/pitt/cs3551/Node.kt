@@ -72,7 +72,9 @@ class Node {
 
             if (work == null) {
                 loadTracker.startSleep()
-                workLock.wait() // Go to sleep
+                synchronized(workLock) {
+                    workLock.wait() // Go to sleep
+                }
             } else {
                 loadTracker.startWork()
                 doWork(work) // Execute the request
@@ -147,7 +149,9 @@ class Node {
             synchronized(this) {
                 queue.add(request)
             }
-            workLock.notify()
+            synchronized(workLock) {
+                workLock.notify()
+            }
         }
     }
 
