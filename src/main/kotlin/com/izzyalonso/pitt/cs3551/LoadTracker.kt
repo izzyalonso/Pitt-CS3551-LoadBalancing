@@ -20,9 +20,19 @@ class LoadTracker {
 
 
     /**
-     * Signals the tracker the start of a sleep cycle. Idempotent.
+     * Signals the tracker the start of a sleep cycle.
      */
     fun startSleep() = synchronized(this) {
+        if (done) {
+            return
+        }
+        lastClick = System.nanoTime()
+    }
+
+    /**
+     * Signals the tracker the end of a sleep cycle.
+     */
+    fun endSleep() = synchronized(this) {
         if (done) {
             return
         }
@@ -30,9 +40,19 @@ class LoadTracker {
     }
 
     /**
-     * Signals the tracker the start of a work cycle. Idempotent.
+     * Signals the tracker the start of a work cycle.
      */
     fun startWork() = synchronized(this) {
+        if (done) {
+            return
+        }
+        lastClick = System.nanoTime()
+    }
+
+    /**
+     * Signals the tracker the end of a work cycle.
+     */
+    fun endWork() = synchronized(this) {
         if (done) {
             return
         }

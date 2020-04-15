@@ -6,7 +6,6 @@ import com.google.gson.TypeAdapter;
 import com.izzyalonso.pitt.cs3551.annotation.NonNull;
 import com.izzyalonso.pitt.cs3551.annotation.Nullable;
 import com.izzyalonso.pitt.cs3551.model.commands.BuildHierarchy;
-import com.izzyalonso.pitt.cs3551.model.commands.DoWork;
 import com.izzyalonso.pitt.cs3551.model.commands.SendNodeInfo;
 import com.izzyalonso.pitt.cs3551.model.commands.controller.KillNodes;
 import com.izzyalonso.pitt.cs3551.model.commands.controller.SpinUpNodes;
@@ -28,7 +27,9 @@ public abstract class Message extends JsonConvertible {
     // Messages for a node
     @Nullable public abstract BuildHierarchy buildHierarchy();
     @Nullable public abstract SendNodeInfo sendNodeInfo();
-    @Nullable public abstract Work doWork();
+    @Nullable public abstract Job doWork();
+
+    @Nullable public abstract LoadInfo loadInfo();
 
     @Nullable public abstract TreeNode hierarchy();
 
@@ -69,6 +70,10 @@ public abstract class Message extends JsonConvertible {
         return builder().hierarchy(hierarchy).build();
     }
 
+    public static Message create(@NonNull LoadInfo loadInfo) {
+        return builder().loadInfo(loadInfo).build();
+    }
+
     /**
      * Creates a message from a JSON string.
      *
@@ -96,7 +101,9 @@ public abstract class Message extends JsonConvertible {
 
         abstract Builder buildHierarchy(@Nullable BuildHierarchy buildHierarchy);
         abstract Builder sendNodeInfo(@Nullable SendNodeInfo sendNodeInfo);
-        abstract Builder doWork(@Nullable Work doWork);
+        abstract Builder doWork(@Nullable Job doWork);
+
+        abstract Builder loadInfo(@Nullable LoadInfo loadInfo);
 
         abstract Builder hierarchy(@Nullable TreeNode hierarchy);
 
