@@ -9,6 +9,7 @@ import com.izzyalonso.pitt.cs3551.net.ServerSocketInterface
 import com.izzyalonso.pitt.cs3551.net.send
 import com.izzyalonso.pitt.cs3551.net.sendAndClose
 import com.izzyalonso.pitt.cs3551.net.sendAsync
+import com.izzyalonso.pitt.cs3551.util.MappingCollector
 import java.lang.Integer.min
 import java.net.Socket
 import java.util.*
@@ -22,6 +23,7 @@ class Node {
     @GuardedBy("this")
     private val queue = LinkedList<Job>()
     private val running = AtomicBoolean(false)
+    private val balancing = AtomicBoolean(false)
 
     private val workLock = Object()
 
@@ -29,7 +31,7 @@ class Node {
     // The hierarchy this node is in charge of
     private lateinit var hierarchy: TreeNode
 
-    // Maps a node to a level
+    // Maps a node to a level; this node's children are at level 0
     @GuardedBy("this") // <- also readonly
     private lateinit var nodeLevelMap: Map<NodeInfo, Int>
     // List of levels mapping node to load
@@ -39,6 +41,8 @@ class Node {
     private var currentLoad = 0.0
 
     private lateinit var loadTracker: LoadTracker
+
+    private lateinit var jobCollectors: List<MappingCollector<NodeInfo, List<JobInfo>>>
 
 
     fun start() {
@@ -73,6 +77,15 @@ class Node {
         }).startListeningAsync()
 
         while (running.get()) {
+            // Should prolly make this a lock instead ¯\_(ツ)_/¯
+            while (!balancing.get()) {
+                try {
+                    Thread.sleep(50)
+                } catch (Ix: InterruptedException) {
+                    // Timeout
+                }
+            }
+
             // Dequeue work
             val work: Job?
             synchronized(this) {
@@ -95,34 +108,20 @@ class Node {
             // Get the load over the last two seconds
             currentLoad = loadTracker.getLoad(2)
 
-            var averageLevelLoad = currentLoad
-            var lastLevelLoads = mutableListOf<Double>()
-            for (i in levelLoads.size-1 downTo 0) {
-                lastLevelLoads.clear()
-                levelLoads[i].forEach {
-                    lastLevelLoads.add(it.value)
-                }
-                lastLevelLoads.add(averageLevelLoad)
-                averageLevelLoad = lastLevelLoads.average()
-            }
+            val highestLevelLoads = highestLevelChildrenLoads()
 
+            // TODO? Allow non global roots to perform load balancing? This requires to take my already clockwork
+            // TODO  synchronization up yet another notch. Not sure I want to do this. A&B territory & very overworked.
             if (hierarchy.parent() == null) {
-                // Evaluate whether a load balancing operation needs to occur
-                var imbalance = false
-                for (load in lastLevelLoads) {
-                    if (abs(load - averageLevelLoad) > imbalanceThreshold) {
-                        imbalance = true
-                        break
-                    }
-                }
-
-                if (imbalance) {
-                    // Trigger load balance operation
+                if (checkImbalance(highestLevelChildrenLoads())) {
+                    // Trigger load balance operation will take some time
+                    val jobsPerNode = collectJobInfos()
                 }
             } else {
                 // Communicate subtree's load to parent
                 val parent = hierarchy.parent()
-                sendAsync(Message.create(LoadInfo.create(thisNode, averageLevelLoad)), parent.address(), parent.port())
+                val averageLoad = highestLevelLoads.average()
+                sendAsync(Message.create(LoadInfo.create(thisNode, averageLoad)), parent.address(), parent.port())
             }
         }
 
@@ -174,6 +173,74 @@ class Node {
         return result
     }
 
+    /**
+     * Calculates the loads of the owned nodes at the highest possible level in the hierarchy.
+     */
+    private fun highestLevelChildrenLoads(): List<Double> {
+        var averageLevelLoad = currentLoad
+        val lastLevelLoads = mutableListOf<Double>()
+        for (i in levelLoads.size-1 downTo 0) {
+            lastLevelLoads.clear()
+            levelLoads[i].forEach {
+                lastLevelLoads.add(it.value)
+            }
+            lastLevelLoads.add(averageLevelLoad)
+            averageLevelLoad = lastLevelLoads.average()
+        }
+        return lastLevelLoads
+    }
+
+    /**
+     * Returns true if there is an imbalance, false otherwise.
+     */
+    private fun checkImbalance(highestLevelChildrenLoads: List<Double>): Boolean {
+        val averageLoad = highestLevelChildrenLoads.average()
+        for (load in highestLevelChildrenLoads) {
+            if (abs(load - averageLoad) > imbalanceThreshold) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Collects this hierarchy's jobs.
+     */
+    private fun collectJobInfos(): Map<NodeInfo, List<JobInfo>> {
+        // It's an unwritten contract that the first node in the list of children is self
+        // Cutting corners here, I know I'm going to dev hell
+        // Anywho, just need to set up the collectors before I request for thread safety, as I want the
+        // operation to be asynchronous for speed. <- Just for reference, Amy, this is what I'm into, parallelization
+        val jobCollectors = mutableListOf<MappingCollector<NodeInfo, List<JobInfo>>>()
+        var hierarchy = this.hierarchy
+        while (!hierarchy.isLeaf) {
+            jobCollectors.add(MappingCollector(hierarchy.children().count()))
+            hierarchy = hierarchy.children()[0]
+        }
+        this.jobCollectors = jobCollectors.toList()
+
+        // Request to all hierarchies this node owns
+        hierarchy.bfsOnOwned { treeNode, _, _ ->
+            val node = treeNode.node()
+            if (treeNode.node() == thisNode) {
+                return@bfsOnOwned // We don't request ourselves, that'd be silly :)
+            }
+            send(Message.createCollectJobs(), node.address(), node.port())
+        }
+
+        var myJobs = synchronized(this) {
+            queue.map { job -> job.getInfo(thisNode) }
+        }
+        // The top index is a special case, this function does not merge those
+        for (i in this.jobCollectors.indices.minus(0).reversed()) {
+            this.jobCollectors[i].add(thisNode, myJobs)
+            myJobs = this.jobCollectors[i].awaitAndGet().collect()
+        }
+
+        this.jobCollectors[0].add(thisNode, myJobs)
+        return this.jobCollectors[0].awaitAndGet()
+    }
+
     @VisibleForInnerAccess
     internal fun handleMessage(message: Message, socket: Socket) {
         message.buildHierarchy()?.let { request ->
@@ -209,8 +276,28 @@ class Node {
                 } // ?: throw(something went wrong)
             }
         }
+
+        if (message.collectJobs()) {
+            // This operation is asynchronous and could take time, free up the socket and I'll open a connection later
+            socket.close()
+            balancing.set(true)
+
+            // This request will only come from the parent
+            send(
+                Message.create(JobInfoList.create(thisNode, collectJobInfos().collect())),
+                hierarchy.parent().address(),
+                hierarchy.parent().port()
+            )
+        }
+
+        message.jobInfoList()?.let {
+            jobCollectors[nodeLevelMap[it.sender()] ?: error("something went south")].add(it.sender(), it.jobInfoList())
+        }
     }
 
+    /**
+     * A bit haphazard IMO. Could be better, but works.
+     */
     fun buildHierarchy(request: BuildHierarchy): TreeNode {
         // Create a list of leaves
         val leaves = LinkedList<TreeNode>()
@@ -246,21 +333,17 @@ class Node {
      * externally.
      */
     private fun buildInternalMappings(hierarchy: TreeNode) {
-        var level = 0
         val nodeLevelMap = mutableMapOf<NodeInfo, Int>()
         val levelLoads = mutableListOf<MutableMap<NodeInfo, Double>>()
-        var currentNode = hierarchy
-        while (!currentNode.isLeaf) {
-            levelLoads.add(mutableMapOf())
-            currentNode.children().forEach {
-                if (it.node() == thisNode) {
-                    currentNode = it
-                } else {
-                    nodeLevelMap[it.node()] = level
-                    levelLoads[level][it.node()] = 0.0
-                }
+        hierarchy.bfsOnOwned { treeNode, level, levelChanged ->
+            if (levelChanged) {
+                levelLoads.add(mutableMapOf())
             }
-            level++
+            val node = treeNode.node()
+            if (node != thisNode) {
+                nodeLevelMap[node] = level
+                levelLoads[level][node] = 0.0
+            }
         }
         synchronized(this) {
             this.nodeLevelMap = nodeLevelMap.toMap()
@@ -272,14 +355,10 @@ class Node {
      * Communicates the hierarchy to all the nodes this node is in charge of.
      */
     private fun communicateHierarchy(hierarchy: TreeNode) {
-        var currentNode = hierarchy
-        while (!currentNode.isLeaf) {
-            currentNode.children().forEach {
-                if (it.node() == thisNode) {
-                    currentNode = it
-                } else {
-                    sendAsync(Message.create(it), it.node().address(), it.node().port())
-                }
+        hierarchy.bfsOnOwned { treeNode, _, _ ->
+            val node = treeNode.node()
+            if (node != thisNode) {
+                sendAsync(Message.create(treeNode), node.address(), node.port())
             }
         }
     }
@@ -297,11 +376,47 @@ class Node {
         }
     }
 
+    /**
+     * true -> 1
+     * false -> 0
+     */
     private fun Boolean.int() = if (this) {
         1
     } else {
         0
     }
+
+    /**
+     * Walks a hierarchy starting at the node being called using breadth first search. Only delivers nodes
+     * this node is actually in charge of. Along with the node, it delivers the level and whether the level
+     * changed in the last iteration.
+     */
+    private fun TreeNode.bfsOnOwned(action: (treeNode: TreeNode, level: Int, levelChanged: Boolean) -> Unit) {
+        var currentNode = this
+        var level = 0
+        // Until we get to the very bottom
+        while (!currentNode.isLeaf) {
+            // Signal this is a new level
+            var levelChanged = true
+            // For every node
+            currentNode.children().forEach {
+                // replace current if self
+                if (it == thisNode) {
+                    currentNode = it
+                }
+                // Call action and reset level change to false
+                action(it, level, levelChanged)
+                levelChanged = false
+            }
+            // Increment tracked level
+            level++
+        }
+    }
+
+    /**
+     * Goodness... I <3 Kt...
+     */
+    private fun <K, V>Map<K, List<V>>.collect(): List<V> = values.fold(mutableListOf()) { acc, values -> acc.apply { addAll(values) } }
 }
 
 fun main() {

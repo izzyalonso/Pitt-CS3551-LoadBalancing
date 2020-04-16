@@ -9,7 +9,7 @@ import com.izzyalonso.pitt.cs3551.model.notices.NodeOnline
 import com.izzyalonso.pitt.cs3551.model.notices.NodesSpawned
 import com.izzyalonso.pitt.cs3551.model.notices.ResponseMessage
 import com.izzyalonso.pitt.cs3551.net.*
-import com.izzyalonso.pitt.cs3551.util.Collector
+import com.izzyalonso.pitt.cs3551.util.BaseCollector
 import com.izzyalonso.pitt.cs3551.util.Logger
 import java.net.Socket
 
@@ -114,7 +114,7 @@ class NodeController(private val port: Int?) {
      * Collects Nodes' online notices.
      */
     @AnyThread
-    class NodeCollector(private val ipAddress: String, nodeCount: Int): Collector<List<NodeInfo>>(nodeCount) {
+    class NodeCollector(private val ipAddress: String, nodeCount: Int): BaseCollector<List<NodeInfo>>(nodeCount) {
 
         @GuardedBy("this")
         private val nodes = mutableListOf<NodeInfo>()

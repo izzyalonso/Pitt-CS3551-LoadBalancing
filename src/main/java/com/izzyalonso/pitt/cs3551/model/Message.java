@@ -33,9 +33,13 @@ public abstract class Message extends JsonConvertible {
 
     @Nullable public abstract TreeNode hierarchy();
 
+    // Instructs the parent of a subtree to collect all its subtrees' jobs
+    public abstract boolean collectJobs(); // Default to false when using the builder
+    @Nullable public abstract JobInfoList jobInfoList();
+
 
     private static Builder builder() {
-        return new AutoValue_Message.Builder();
+        return new AutoValue_Message.Builder().collectJobs(false);
     }
 
     /*
@@ -74,6 +78,14 @@ public abstract class Message extends JsonConvertible {
         return builder().loadInfo(loadInfo).build();
     }
 
+    public static Message createCollectJobs() {
+        return builder().collectJobs(true).build();
+    }
+
+    public static Message create(@NonNull JobInfoList jobInfoList) {
+        return builder().jobInfoList(jobInfoList).build();
+    }
+
     /**
      * Creates a message from a JSON string.
      *
@@ -106,6 +118,9 @@ public abstract class Message extends JsonConvertible {
         abstract Builder loadInfo(@Nullable LoadInfo loadInfo);
 
         abstract Builder hierarchy(@Nullable TreeNode hierarchy);
+
+        abstract Builder collectJobs(boolean collectJobs);
+        abstract Builder jobInfoList(@Nullable JobInfoList jobInfoList);
 
         abstract Message build();
     }

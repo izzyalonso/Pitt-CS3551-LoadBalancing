@@ -27,7 +27,7 @@ public abstract class Job extends JsonConvertible {
         }
     }
 
-    public JobInfo toWeight(@NonNull NodeInfo owner) {
+    public JobInfo getInfo(@NonNull NodeInfo owner) {
         return JobInfo.create(this, owner);
     }
 

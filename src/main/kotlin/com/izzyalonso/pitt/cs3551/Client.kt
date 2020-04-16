@@ -10,7 +10,7 @@ import com.izzyalonso.pitt.cs3551.model.commands.controller.SpinUpNodes
 import com.izzyalonso.pitt.cs3551.net.MessageCallback
 import com.izzyalonso.pitt.cs3551.net.send
 import com.izzyalonso.pitt.cs3551.net.sendAsync
-import com.izzyalonso.pitt.cs3551.util.Collector
+import com.izzyalonso.pitt.cs3551.util.BaseCollector
 import com.izzyalonso.pitt.cs3551.util.Logger
 
 
@@ -51,7 +51,7 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
     }
 
     @AnyThread
-    private class NodeCollector(controllerCount: Int): Collector<List<NodeInfo>>(controllerCount), MessageCallback {
+    private class NodeCollector(controllerCount: Int): BaseCollector<List<NodeInfo>>(controllerCount), MessageCallback {
         @GuardedBy("this")
         private val nodes = mutableListOf<NodeInfo>()
 

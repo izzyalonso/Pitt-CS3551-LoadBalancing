@@ -9,10 +9,11 @@ import java.util.List;
 
 @AutoValue
 public abstract class JobInfoList extends JsonConvertible {
+    public abstract NodeInfo sender();
     public abstract List<JobInfo> jobInfoList();
 
-    public static JobInfoList create(@NonNull List<JobInfo> jobInfoList) {
-        return new AutoValue_JobInfoList(jobInfoList);
+    public static JobInfoList create(@NonNull NodeInfo sender, @NonNull List<JobInfo> jobInfoList) {
+        return new AutoValue_JobInfoList(sender, jobInfoList);
     }
 
     public static TypeAdapter<JobInfoList> typeAdapter(Gson gson) {
