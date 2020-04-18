@@ -43,6 +43,8 @@ class Node {
     private lateinit var loadTracker: LoadTracker
 
     private lateinit var jobCollectors: List<MappingCollector<NodeInfo, List<JobInfo>>>
+    // Metadata to be able to make decisions on how to move jobs around
+    private lateinit var jobNodeMapping: List<MutableMap<JobInfo, NodeInfo>>
 
 
     fun start() {
@@ -77,7 +79,8 @@ class Node {
         }).startListeningAsync()
 
         while (running.get()) {
-            // Should prolly make this a lock instead ¯\_(ツ)_/¯
+            // Should prolly make this a monitored lock instead ¯\_(ツ)_/¯
+            // Oh well, worst case scenario we lose 50 ms
             while (!balancing.get()) {
                 try {
                     Thread.sleep(50)
@@ -162,11 +165,13 @@ class Node {
                                 }
                             }
                         }
+                        // Remove the donor from the containers to dispatch.
                         doneTransferContainers.add(donorContainer)
                         transferContainers.removeFirst()
                     }
 
                     // Send moved jobs as tokens down the pipe
+
                 }
             } else {
                 // Communicate subtree's load to parent
@@ -263,12 +268,15 @@ class Node {
         // Anywho, just need to set up the collectors before I request for thread safety, as I want the
         // operation to be asynchronous for speed. <- Just for reference, Amy, this is what I'm into, parallelization
         val jobCollectors = mutableListOf<MappingCollector<NodeInfo, List<JobInfo>>>()
+        val jobNodeMapping = mutableListOf<MutableMap<JobInfo, NodeInfo>>()
         var hierarchy = this.hierarchy
         while (!hierarchy.isLeaf) {
             jobCollectors.add(MappingCollector(hierarchy.children().count()))
+            jobNodeMapping.add(mutableMapOf())
             hierarchy = hierarchy.children()[0]
         }
         this.jobCollectors = jobCollectors.toList()
+        this.jobNodeMapping = jobNodeMapping.toList()
 
         // Request to all hierarchies this node owns
         hierarchy.bfsOnOwned { treeNode, _, _ ->
@@ -285,11 +293,24 @@ class Node {
         // The top index is a special case, this function does not merge those
         for (i in this.jobCollectors.indices.minus(0).reversed()) {
             this.jobCollectors[i].add(thisNode, myJobs)
+            val nodesToJobs = this.jobCollectors[i].awaitAndGet()
+            nodesToJobs.forEach { nodeToJobs ->
+                nodeToJobs.value.forEach { job ->
+                    this.jobNodeMapping[i][job] = nodeToJobs.key
+                }
+            }
             myJobs = this.jobCollectors[i].awaitAndGet().collect()
         }
 
+        // Not DRY >:, but also ¯\_(ツ)_/¯
         this.jobCollectors[0].add(thisNode, myJobs)
-        return this.jobCollectors[0].awaitAndGet()
+        val nodesToJobs = this.jobCollectors[0].awaitAndGet()
+        nodesToJobs.forEach { nodeToJobs ->
+            nodeToJobs.value.forEach { job ->
+                this.jobNodeMapping[0][job] = nodeToJobs.key
+            }
+        }
+        return nodesToJobs
     }
 
     @VisibleForInnerAccess
