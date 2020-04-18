@@ -14,7 +14,8 @@ public abstract class JobInfo extends JsonConvertible implements Comparable<JobI
 
     @Override
     public int compareTo(@NotNull JobInfo other) {
-        return Integer.compare(weight(), other.weight());
+        // Reverse order, heaviest first
+        return Integer.compare(other.weight(), weight());
     }
 
     public static JobInfo create(@NonNull Job job, @NonNull NodeInfo owner) {

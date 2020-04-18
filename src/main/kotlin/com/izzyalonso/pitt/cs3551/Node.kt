@@ -114,8 +114,60 @@ class Node {
             // TODO  synchronization up yet another notch. Not sure I want to do this. A&B territory & very overworked.
             if (hierarchy.parent() == null) {
                 if (checkImbalance(highestLevelChildrenLoads())) {
-                    // Trigger load balance operation will take some time
+                    // Trigger load balance operation, will take some time
                     val jobsPerNode = collectJobInfos()
+
+                    // Create the transfer containers and calculate average weight
+                    val transferContainers = LinkedList<TransferContainer>()
+                    jobsPerNode.entries.forEach {
+                        transferContainers.add(TransferContainer(it.key, it.value))
+                    }
+                    val averageWeight = transferContainers.averageWeight()
+
+                    // Sort; we're looking to transfer work from the busiest nodes to the idlest nodes
+                    transferContainers.sort()
+
+                    // So here is how this thing works:
+                    //  - I have donors and recipients, one cannot be both on a single operation.
+                    //  - A donor donates up until it goes below the average weight.
+                    //    - Donors over donate, but I'm using a form of locality I just made up to where I assume
+                    //      that if a node is already overworked it'll tend to stay overworked. Fingers crossed.
+                    //      Of course, some of my tests are gonna skew the distribution on purpose, the validity
+                    //      of this principle would need to be proved using real production systems. Moving on.
+                    //  - A recipient receives until it goes above the average weight.
+                    //    - Recipients over receive. Same reason.
+                    //  - Once an agent is selected for donorship or recepientship, it will stay that way
+                    //    until it crosses the line.
+                    //  - Once an agent crosses the line it is removed from consideration.
+                    //  - We should end up with no agents in the list by the end.
+                    //    - Disclaimer, I'm not gonna prove this mathematically, I may be wrong.
+                    // Let the games begin
+                    val doneTransferContainers = mutableListOf<TransferContainer>()
+                    while (transferContainers.size > 1) {
+                        val donorContainer = transferContainers.first // Pick the busiest processor
+                        while (donorContainer.weight() > averageWeight) {
+                            val recipientContainer = transferContainers.last
+                            val recipientSlack = averageWeight-recipientContainer.weight()
+                            val job = donorContainer.getJobJustUnder(recipientSlack)
+                            if (job == null) {
+                                // Something went wrong, log something
+                                doneTransferContainers.add(donorContainer)
+                                transferContainers.removeFirst() // But for now just move over to done
+                            } else {
+                                recipientContainer.assignJob(job)
+                                if (recipientContainer.weight() > averageWeight) {
+                                    transferContainers.removeLast()
+                                    doneTransferContainers.add(recipientContainer)
+                                }
+                            }
+                            if (donorContainer.weight() < averageWeight) {
+                                doneTransferContainers.add(donorContainer)
+                                transferContainers.removeFirst()
+                            }
+                        }
+                    }
+
+                    // Send moved jobs as tokens down the pipe
                 }
             } else {
                 // Communicate subtree's load to parent
@@ -416,8 +468,75 @@ class Node {
     /**
      * Goodness... I <3 Kt...
      */
-    private fun <K, V>Map<K, List<V>>.collect(): List<V> = values.fold(mutableListOf()) { acc, values -> acc.apply { addAll(values) } }
+    private fun <K, V>Map<K, List<V>>.collect(): MutableList<V> = values.fold(mutableListOf()) { acc, values -> acc.apply { addAll(values) } }
+
+    private fun List<TransferContainer>.averageWeight(): Int {
+        var weight = 0
+        forEach {
+            weight += it.weight()
+        }
+        return weight/size
+    }
 }
+
+/**
+ * Just a containerized way of keeping track of transferred weights.
+ */
+class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<TransferContainer> {
+    private val added = mutableListOf<JobInfo>()
+
+    private val jobsBySize = mutableListOf<JobInfo?>()
+    var totalRemaining: Int = 0
+    private set
+    var totalAdded: Int = 0
+    private set
+
+    init {
+        jobs.sorted().forEach {
+            jobsBySize.add(it)
+            totalRemaining += it.weight()
+        }
+    }
+
+    /**
+     * Just a note. May return the job just above if the job just under does not exist. May return null if
+     * neither actually exist. That last scenario would be a bug though ¯\_(ツ)_/¯
+     */
+    fun getJobJustUnder(size: Int): JobInfo? {
+        if (jobsBySize.isEmpty()) {
+            return null
+        }
+
+        var i = 0
+        for (j in jobsBySize.indices) {
+            i = j
+            if (jobsBySize[j].weightOrMax() < size) {
+                break
+            }
+        }
+
+        val tmp = jobsBySize[i]
+        // Not worth removing, too expensive
+        jobsBySize[i] = null
+        tmp?.let {
+            totalRemaining -= it.weight()
+        }
+        return tmp
+    }
+
+    fun assignJob(job: JobInfo) {
+        added.add(job)
+        totalAdded += job.weight()
+    }
+
+    fun weight() = totalRemaining + totalAdded
+
+    // Reversed cause descending
+    override fun compareTo(other: TransferContainer) = other.weight().compareTo(weight())
+
+    private fun JobInfo?.weightOrMax() = this?.weight() ?: Int.MAX_VALUE
+}
+
 
 fun main() {
     val nodes = mutableListOf<NodeInfo>()
