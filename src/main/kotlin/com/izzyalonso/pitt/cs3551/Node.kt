@@ -154,17 +154,16 @@ class Node {
                                 doneTransferContainers.add(donorContainer)
                                 transferContainers.removeFirst() // But for now just move over to done
                             } else {
+                                // Assign the job to the recipient and check whether the recipient is done
                                 recipientContainer.assignJob(job)
                                 if (recipientContainer.weight() > averageWeight) {
                                     transferContainers.removeLast()
                                     doneTransferContainers.add(recipientContainer)
                                 }
                             }
-                            if (donorContainer.weight() < averageWeight) {
-                                doneTransferContainers.add(donorContainer)
-                                transferContainers.removeFirst()
-                            }
                         }
+                        doneTransferContainers.add(donorContainer)
+                        transferContainers.removeFirst()
                     }
 
                     // Send moved jobs as tokens down the pipe
@@ -528,6 +527,8 @@ class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<Tra
         added.add(job)
         totalAdded += job.weight()
     }
+
+    fun getAdded() = added
 
     fun weight() = totalRemaining + totalAdded
 
