@@ -113,65 +113,17 @@ class Node {
 
             val highestLevelLoads = highestLevelChildrenLoads()
 
-            // TODO? Allow non global roots to perform load balancing? This requires to take my already clockwork
-            // TODO  synchronization up yet another notch. Not sure I want to do this. A&B territory & very overworked.
+            // TODO? Allow non global roots to perform load balancing without trigger a full scale operation?
+            // TODO  This requires to take my already clockwork synchronization up yet another notch. Not sure
+            // TODO  I want to do this. A&B territory & very overworked.
             if (hierarchy.parent() == null) {
                 if (checkImbalance(highestLevelChildrenLoads())) {
-                    // Trigger load balance operation, will take some time
+                    // Gather information about the state of the cluster, will take some time
                     val jobsPerNode = collectJobInfos()
-
-                    // Create the transfer containers and calculate average weight
-                    val transferContainers = LinkedList<TransferContainer>()
-                    jobsPerNode.entries.forEach {
-                        transferContainers.add(TransferContainer(it.key, it.value))
-                    }
-                    val averageWeight = transferContainers.averageWeight()
-
-                    // Sort; we're looking to transfer work from the busiest nodes to the idlest nodes
-                    transferContainers.sort()
-
-                    // So here is how this thing works:
-                    //  - I have donors and recipients, one cannot be both on a single operation.
-                    //  - A donor donates up until it goes below the average weight.
-                    //    - Donors over donate, but I'm using a form of locality I just made up to where I assume
-                    //      that if a node is already overworked it'll tend to stay overworked. Fingers crossed.
-                    //      Of course, some of my tests are gonna skew the distribution on purpose, the validity
-                    //      of this principle would need to be proved using real production systems. Moving on.
-                    //  - A recipient receives until it goes above the average weight.
-                    //    - Recipients over receive. Same reason.
-                    //  - Once an agent is selected for donorship or recepientship, it will stay that way
-                    //    until it crosses the line.
-                    //  - Once an agent crosses the line it is removed from consideration.
-                    //  - We should end up with no agents in the list by the end.
-                    //    - Disclaimer, I'm not gonna prove this mathematically, I may be wrong.
-                    // Let the games begin
-                    val doneTransferContainers = mutableListOf<TransferContainer>()
-                    while (transferContainers.size > 1) {
-                        val donorContainer = transferContainers.first // Pick the busiest processor
-                        while (donorContainer.weight() > averageWeight) {
-                            val recipientContainer = transferContainers.last
-                            val recipientSlack = averageWeight-recipientContainer.weight()
-                            val job = donorContainer.getJobJustUnder(recipientSlack)
-                            if (job == null) {
-                                // Something went wrong, log something
-                                doneTransferContainers.add(donorContainer)
-                                transferContainers.removeFirst() // But for now just move over to done
-                            } else {
-                                // Assign the job to the recipient and check whether the recipient is done
-                                recipientContainer.assignJob(job)
-                                if (recipientContainer.weight() > averageWeight) {
-                                    transferContainers.removeLast()
-                                    doneTransferContainers.add(recipientContainer)
-                                }
-                            }
-                        }
-                        // Remove the donor from the containers to dispatch.
-                        doneTransferContainers.add(donorContainer)
-                        transferContainers.removeFirst()
-                    }
-
-                    // Send moved jobs as tokens down the pipe
-
+                    // Execute the operation
+                    val transfers = loadBalance(jobsPerNode)
+                    // Classify the transfers and send the results to the relevant nodes
+                    // TODO
                 }
             } else {
                 // Communicate subtree's load to parent
@@ -311,6 +263,67 @@ class Node {
             }
         }
         return nodesToJobs
+    }
+
+    /**
+     * Load balance. This is where the secret sauce is. Most of it anywho.
+     */
+    private fun loadBalance(jobsPerNode: Map<NodeInfo, List<JobInfo>>): List<JobTransfer> {
+        // Create the transfer containers and calculate average weight
+        val transferContainers = LinkedList<TransferContainer>()
+        jobsPerNode.entries.forEach {
+            transferContainers.add(TransferContainer(it.key, it.value))
+        }
+        val averageWeight = transferContainers.averageWeight()
+
+        // Sort; we're looking to transfer work from the busiest nodes to the idlest nodes
+        transferContainers.sort()
+
+        // In the end, all we care about is the transfers
+        val jobTransfers = mutableListOf<JobTransfer>()
+
+        // So here is how this thing works:
+        //  - I have donors and recipients, one cannot be both on a single operation.
+        //  - A donor donates up until it goes below the average weight.
+        //    - Donors over donate, but I'm using a form of locality I just made up to where I assume
+        //      that if a node is already overworked it'll tend to stay overworked. Fingers crossed.
+        //      Of course, some of my tests are gonna skew the distribution on purpose, the validity
+        //      of this principle would need to be proved using real production systems. Moving on.
+        //  - A recipient receives until it goes above the average weight.
+        //    - Recipients over receive. Same reason.
+        //  - Once an agent is selected for donorship or recepientship, it will stay that way
+        //    until it crosses the line.
+        //  - Once an agent crosses the line it is removed from consideration.
+        //  - We should end up with no agents in the list by the end.
+        //    - Disclaimer, I'm not gonna prove this mathematically, I may be wrong.
+        // Let the games begin
+        val doneTransferContainers = mutableListOf<TransferContainer>()
+        while (transferContainers.size > 1) {
+            val donorContainer = transferContainers.first // Pick the busiest processor
+            while (donorContainer.weight() > averageWeight) {
+                val recipientContainer = transferContainers.last
+                val recipientSlack = averageWeight-recipientContainer.weight()
+                val job = donorContainer.getJobJustUnder(recipientSlack)
+                if (job == null) {
+                    // Something went wrong, log something
+                    doneTransferContainers.add(donorContainer)
+                    transferContainers.removeFirst() // But for now just move over to done
+                } else {
+                    // Assign the job to the recipient, record the transfer, and check whether the recipient is done
+                    recipientContainer.assignJob(job)
+                    jobTransfers.add(JobTransfer.create(job, donorContainer.node, recipientContainer.node))
+                    if (recipientContainer.weight() > averageWeight) {
+                        transferContainers.removeLast()
+                        doneTransferContainers.add(recipientContainer)
+                    }
+                }
+            }
+            // Remove the donor from the containers to dispatch.
+            doneTransferContainers.add(donorContainer)
+            transferContainers.removeFirst()
+        }
+
+        return jobTransfers
     }
 
     @VisibleForInnerAccess
