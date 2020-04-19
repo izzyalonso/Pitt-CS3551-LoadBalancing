@@ -37,13 +37,14 @@ fun main(args: Array<String>) {
         "-x" -> runClient(map["--controllers"]?.get(0))
         "-c" -> runNodeController(map["--port"]?.first()?.toInt())
         "-n" -> runNode()
+        "-l" -> runLogger()
         else -> printHelp()
     }
 }
 
 private fun getComponents(map: Map<String, List<String>>): List<String> {
     val components = mutableListOf<String>()
-    arrayOf("-x", "-c", "-n").forEach {
+    arrayOf("-x", "-c", "-n", "-l").forEach {
         if (map.containsKey(it)) {
             components.add(it)
         }
@@ -75,11 +76,16 @@ private fun runNode() {
     Node().start()
 }
 
+private fun runLogger() {
+    LogNode().start()
+}
+
 private fun printHelp() {
     println("Use one of the following arguments:")
     println("\t-x to run the client.")
     println("\t-c to run a node controller.")
     println("\t-n to run a node. This operation should only be performed by a controller in prod.")
+    println("\t-l to tun the logger.")
     println("\t--port P (node controller only) to override the node controller's operating port, where P is the port number.")
     println("\t--controllers F (client only) to let the client where the node controllers are, where F is the path to the csv file.")
     println("\t-d to print out debug logs.")

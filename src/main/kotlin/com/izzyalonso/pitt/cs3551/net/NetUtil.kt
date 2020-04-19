@@ -1,5 +1,6 @@
 package com.izzyalonso.pitt.cs3551.net
 
+import com.izzyalonso.pitt.cs3551.logNodePort
 import com.izzyalonso.pitt.cs3551.model.Message
 import java.io.*
 import java.net.Socket
@@ -24,6 +25,10 @@ fun getIpAddress() = URL("http://checkip.amazonaws.com/").bufferedReader().use {
 fun Socket.send(message: Message) = printWriter().println(message.toJson())
 fun Socket.sendAndClose(message: Message) = printWriter().use { writer ->
     writer.println(message)
+}
+
+fun sendLog(message: String) {
+    sendAsync(Message.create(message), "localhost", logNodePort)
 }
 
 /**

@@ -36,6 +36,9 @@ public abstract class Message extends JsonConvertible {
     // Instructs the parent of a subtree to collect all its subtrees' jobs
     public abstract boolean collectJobs(); // Default to false when using the builder
     @Nullable public abstract JobInfoList jobInfoList();
+    @Nullable public abstract LoadBalancingResult loadBalancingResult();
+
+    @Nullable public abstract String log();
 
 
     private static Builder builder() {
@@ -86,6 +89,14 @@ public abstract class Message extends JsonConvertible {
         return builder().jobInfoList(jobInfoList).build();
     }
 
+    public static Message create(@NonNull LoadBalancingResult loadBalancingResult) {
+        return builder().loadBalancingResult(loadBalancingResult).build();
+    }
+
+    public static Message create(@NonNull String log) {
+        return builder().log(log).build();
+    }
+
     /**
      * Creates a message from a JSON string.
      *
@@ -121,6 +132,9 @@ public abstract class Message extends JsonConvertible {
 
         abstract Builder collectJobs(boolean collectJobs);
         abstract Builder jobInfoList(@Nullable JobInfoList jobInfoList);
+        abstract Builder loadBalancingResult(@Nullable LoadBalancingResult loadBalancingResult);
+
+        abstract Builder log(@Nullable String log);
 
         abstract Message build();
     }

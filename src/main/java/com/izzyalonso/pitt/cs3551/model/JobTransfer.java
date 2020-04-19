@@ -12,6 +12,14 @@ public abstract class JobTransfer extends JsonConvertible {
     public abstract NodeInfo donor();
     public abstract NodeInfo recipient();
 
+    public JobTransfer replacing(@NonNull NodeInfo target, @NonNull NodeInfo replacement) {
+        return create(
+                job(),
+                donor().equals(target) ? replacement : donor(),
+                recipient().equals(target) ? replacement : recipient()
+        );
+    }
+
     public static JobTransfer create(@NonNull JobInfo job, @NonNull NodeInfo donor, @NonNull NodeInfo recipient) {
         return new AutoValue_JobTransfer(job, donor, recipient);
     }

@@ -5,10 +5,7 @@ import com.izzyalonso.pitt.cs3551.annotation.VisibleForInnerAccess
 import com.izzyalonso.pitt.cs3551.model.*
 import com.izzyalonso.pitt.cs3551.model.commands.BuildHierarchy
 import com.izzyalonso.pitt.cs3551.model.notices.NodeOnline
-import com.izzyalonso.pitt.cs3551.net.ServerSocketInterface
-import com.izzyalonso.pitt.cs3551.net.send
-import com.izzyalonso.pitt.cs3551.net.sendAndClose
-import com.izzyalonso.pitt.cs3551.net.sendAsync
+import com.izzyalonso.pitt.cs3551.net.*
 import com.izzyalonso.pitt.cs3551.util.MappingCollector
 import java.lang.Integer.min
 import java.net.Socket
@@ -48,6 +45,14 @@ class Node {
 
 
     fun start() {
+        try {
+            startInternal()
+        } catch (x: Exception) {
+            sendLog("$thisNode failed: $${x.message}")
+        }
+    }
+
+    private fun startInternal() {
         println("Starting node.")
         running.set(true)
 
@@ -106,10 +111,12 @@ class Node {
                 loadTracker.startWork()
                 doWork(work) // Execute the request
                 loadTracker.endWork()
+                sendLog("$thisNode completed $work")
             }
 
             // Get the load over the last two seconds
             currentLoad = loadTracker.getLoad(2)
+            sendLog("$thisNode current load: $currentLoad")
 
             val highestLevelLoads = highestLevelChildrenLoads()
 
@@ -118,12 +125,35 @@ class Node {
             // TODO  I want to do this. A&B territory & very overworked.
             if (hierarchy.parent() == null) {
                 if (checkImbalance(highestLevelChildrenLoads())) {
+                    sendLog("Triggering load balancing operation")
+
                     // Gather information about the state of the cluster, will take some time
                     val jobsPerNode = collectJobInfos()
+
+                    // Create the transfer containers
+                    val transferContainers = LinkedList<TransferContainer>()
+                    jobsPerNode.entries.forEach {
+                        transferContainers.add(TransferContainer(it.key, it.value))
+                    }
+
                     // Execute the operation
-                    val transfers = loadBalance(jobsPerNode)
+                    val transfers = loadBalance(transferContainers)
                     // Classify the transfers and send the results to the relevant nodes
-                    // TODO
+                    val transfersPerNode = mutableMapOf<NodeInfo, MutableList<JobTransfer>>()
+                    for (node in jobsPerNode.keys) {
+                        transfersPerNode[node] = mutableListOf()
+                    }
+                    for (transfer in transfers) {
+                        transfersPerNode[transfer.donor()]?.add(transfer)
+                        transfersPerNode[transfer.recipient()]?.add(transfer)
+                    }
+
+                    transfersPerNode.forEach { (node, transfers) ->
+                        if (node != thisNode) {
+                            send(Message.create(LoadBalancingResult.create(transfers)), node.address(), node.port())
+                        }
+                    }
+                    propagatedLoadBalancingOperation(transfersPerNode[thisNode]!!, 1)
                 }
             } else {
                 // Communicate subtree's load to parent
@@ -268,12 +298,8 @@ class Node {
     /**
      * Load balance. This is where the secret sauce is. Most of it anywho.
      */
-    private fun loadBalance(jobsPerNode: Map<NodeInfo, List<JobInfo>>): List<JobTransfer> {
+    fun loadBalance(transferContainers: LinkedList<TransferContainer>): MutableList<JobTransfer> {
         // Create the transfer containers and calculate average weight
-        val transferContainers = LinkedList<TransferContainer>()
-        jobsPerNode.entries.forEach {
-            transferContainers.add(TransferContainer(it.key, it.value))
-        }
         val averageWeight = transferContainers.averageWeight()
 
         // Sort; we're looking to transfer work from the busiest nodes to the idlest nodes
@@ -294,11 +320,9 @@ class Node {
         //  - Once an agent is selected for donorship or recepientship, it will stay that way
         //    until it crosses the line.
         //  - Once an agent crosses the line it is removed from consideration.
-        //  - We should end up with no agents in the list by the end.
-        //    - Disclaimer, I'm not gonna prove this mathematically, I may be wrong.
         // Let the games begin
         val doneTransferContainers = mutableListOf<TransferContainer>()
-        while (transferContainers.size > 1) {
+        while (transfersAvailable(transferContainers, averageWeight)) {
             val donorContainer = transferContainers.first // Pick the busiest processor
             while (donorContainer.weight() > averageWeight) {
                 val recipientContainer = transferContainers.last
@@ -324,6 +348,16 @@ class Node {
         }
 
         return jobTransfers
+    }
+
+    private fun transfersAvailable(transferContainers: List<TransferContainer>, averageWeight: Int): Boolean {
+        if (transferContainers.isEmpty()) {
+            return true
+        }
+
+        val first = transferContainers.first().weight() > averageWeight
+        val last = transferContainers.last().weight() > averageWeight
+        return first != last
     }
 
     @VisibleForInnerAccess
@@ -377,6 +411,15 @@ class Node {
 
         message.jobInfoList()?.let {
             jobCollectors[nodeLevelMap[it.sender()] ?: error("something went south")].add(it.sender(), it.jobInfoList())
+        }
+
+        // This message is only received at the top level, so we can work backwards down the hierarchy
+        message.loadBalancingResult()?.let {
+            if (hierarchy.isLeaf) {
+                // Find me jobs and get oot of balancing mode
+            } else {
+                propagatedLoadBalancingOperation(message.loadBalancingResult().jobTransfers(), 0)
+            }
         }
     }
 
@@ -449,6 +492,92 @@ class Node {
     }
 
     /**
+     * As it propagates down the hierarchy.
+     */
+    private fun propagatedLoadBalancingOperation(transfers: List<JobTransfer>, round: Int) {
+        // Need to factor in transfer decisions into the next round
+        // Separate donated from received
+        // We need to be able to look up the blacklist quickly
+        val jobBlacklistPerNode = mutableMapOf<NodeInfo, MutableSet<JobInfo>>()
+        val jobsDonated = mutableListOf<JobTransfer>() // Deaggregated
+        // We also need to keep a map of received to redistribute
+        val jobsReceived = mutableListOf<JobTransfer>()
+        transfers.forEach {
+            if (it.donor() == thisNode) {
+                val deaggregated = it.replacing(thisNode, jobNodeMapping[round][it.job()]) // And deaggregate while we're at it
+                jobsDonated.add(deaggregated)
+                if (!jobBlacklistPerNode.containsKey(deaggregated.donor())) {
+                    jobBlacklistPerNode[deaggregated.donor()] = mutableSetOf()
+                }
+                jobBlacklistPerNode[deaggregated.donor()]?.add(deaggregated.job())
+            } else if (it.recipient() == thisNode) {
+                jobsReceived.add(it)
+            }
+        }
+
+        // Original jobs per node
+        val jobsPerNodeAtCollectTime = jobCollectors[round].awaitAndGet() // <- the condition has already been met, there is no waiting
+        // New map we're constructing
+        val jobsPerNode = mutableMapOf<NodeInfo, MutableList<JobInfo>>()
+        // Remove donated objects (or rather, don't include them)
+        jobsPerNodeAtCollectTime.forEach { entry ->
+            jobsPerNode[entry.key] = mutableListOf()
+            entry.value.forEach {
+                if (jobBlacklistPerNode[entry.key]?.contains(it) == true) {
+                    jobsPerNode[entry.key]?.add(it)
+                }
+            }
+        }
+
+        // Create transfer containers
+        val transferContainers = LinkedList<TransferContainer>()
+        jobsPerNode.entries.forEach {
+            transferContainers.add(TransferContainer(it.key, it.value))
+        }
+        transferContainers.sort()
+
+        // Keep track of these as a map, as some may need to not be taken into account
+        val reassignedJobs = mutableMapOf<JobInfo, JobTransfer>()
+        jobsReceived.forEach { transfer ->
+            val target = transferContainers.last
+            target.assignJob(transfer.job())
+            reassignedJobs[transfer.job()] = transfer.replacing(thisNode, target.node)
+            transferContainers.sort() // Won't be a billion containers, just 2 - 4
+        }
+
+        val finalPreTransferContainers = LinkedList<TransferContainer>()
+        transferContainers.forEach {
+            finalPreTransferContainers.add(it.collapsed())
+        }
+
+        val levelTransfers = loadBalance(finalPreTransferContainers)
+
+        // If reassigned, remove
+        levelTransfers.forEach {
+            reassignedJobs.remove(it.job())
+        }
+        reassignedJobs.values.forEach {
+            levelTransfers.add(it)
+        }
+        levelTransfers.addAll(jobsDonated)
+
+        val transfersPerNode = mutableMapOf<NodeInfo, MutableList<JobTransfer>>()
+        for (node in jobsPerNode.keys) {
+            transfersPerNode[node] = mutableListOf()
+        }
+        for (transfer in levelTransfers) {
+            transfersPerNode[transfer.donor()]?.add(transfer)
+            transfersPerNode[transfer.recipient()]?.add(transfer)
+        }
+
+        if (round == jobCollectors.size-1) {
+            // Find my jobs
+        } else {
+            propagatedLoadBalancingOperation(levelTransfers, round+1)
+        }
+    }
+
+    /**
      * Dequeues an item but returns null instead of throwing if there ain't any.
      *
      * NOTE: not thread safe.
@@ -510,10 +639,18 @@ class Node {
         }
         return weight/size
     }
+
+    private fun <K, V>MutableMap<K, MutableList<V>>.putIntoList(key: K, value: V) {
+        if (containsKey(key)) {
+            get(key)?.add(value)
+        } else {
+            put(key, mutableListOf(value))
+        }
+    }
 }
 
 /**
- * Just a containerized way of keeping track of transferred weights.
+ * Just a containerized way of keeping track of transferred weights. Don't wanna be recomputing anything.
  */
 class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<TransferContainer> {
     private val added = mutableListOf<JobInfo>()
@@ -548,7 +685,10 @@ class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<Tra
             }
         }
 
-        val tmp = jobsBySize[i]
+        var tmp = jobsBySize[i]
+        while (tmp == null && i >= 0) {
+            tmp = jobsBySize[--i]
+        }
         // Not worth removing, too expensive
         jobsBySize[i] = null
         tmp?.let {
@@ -569,11 +709,44 @@ class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<Tra
     // Reversed cause descending
     override fun compareTo(other: TransferContainer) = other.weight().compareTo(weight())
 
+    fun collapsed(): TransferContainer {
+        val jobs = mutableListOf<JobInfo>()
+        for (job in jobsBySize) {
+            if (job != null) {
+                jobs.add(job)
+            }
+        }
+        jobs.addAll(added)
+        return TransferContainer(node, jobs)
+    }
+
     private fun JobInfo?.weightOrMax() = this?.weight() ?: Int.MAX_VALUE
 }
 
 
 fun main() {
+    val jobsPerNode = mutableMapOf<NodeInfo, List<JobInfo>>()
+    for (i in 0 until 4) {
+        val node = NodeInfo.create("node", i)
+        val jobs = mutableListOf<JobInfo>()
+        for (j in 0 until i) {
+            jobs.add(JobInfo.create(Job.create(Job.Type.SQUARE_SUM, ((j+1)*(i+1))), node))
+        }
+        jobsPerNode[node] = jobs
+    }
+
+    val transferContainers = LinkedList<TransferContainer>()
+    jobsPerNode.entries.forEach {
+        transferContainers.add(TransferContainer(it.key, it.value))
+    }
+
+    val transfers = Node().loadBalance(transferContainers)
+
+    println(jobsPerNode)
+    println(transfers)
+}
+
+fun hierarchyTest() {
     val nodes = mutableListOf<NodeInfo>()
     for (i in 0 until 4) {
         nodes.add((NodeInfo.create("node", i)))
