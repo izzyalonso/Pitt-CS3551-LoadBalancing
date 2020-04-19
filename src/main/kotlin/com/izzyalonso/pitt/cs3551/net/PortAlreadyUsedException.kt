@@ -1,3 +1,3 @@
 package com.izzyalonso.pitt.cs3551.net
 
-class PortAlreadyUsedException: Exception()
+class PortAlreadyUsedException: java.lang.Exception()

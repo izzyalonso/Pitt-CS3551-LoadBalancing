@@ -57,7 +57,7 @@ class ServerSocketInterface @JvmOverloads constructor(private val listener: List
                                         break // <- one line per incoming connection
                                     } catch (x: Exception) {
                                         Logger.d("Received invalid message:")
-                                        Logger.d(input)
+                                        sendLog("Invalid message: $input")
                                     }
                                 }
                             } catch (iox: IOException) {

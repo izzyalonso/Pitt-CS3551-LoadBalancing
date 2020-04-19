@@ -73,6 +73,10 @@ public abstract class Message extends JsonConvertible {
         return builder().buildHierarchy(buildHierarchy).build();
     }
 
+    public static Message create(@NonNull Job job) {
+        return builder().doWork(job).build();
+    }
+
     public static Message create(@NonNull TreeNode hierarchy) {
         return builder().hierarchy(hierarchy).build();
     }

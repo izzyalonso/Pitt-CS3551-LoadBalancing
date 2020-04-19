@@ -1,6 +1,8 @@
 package com.izzyalonso.pitt.cs3551.model;
 
 import com.google.auto.value.AutoValue;
+import com.google.gson.Gson;
+import com.google.gson.TypeAdapter;
 import com.izzyalonso.pitt.cs3551.annotation.NonNull;
 
 
@@ -34,6 +36,10 @@ public abstract class Job extends JsonConvertible {
     @NonNull
     public static Job create(@NonNull Type type, int input) {
         return new AutoValue_Job(createId(), type, input);
+    }
+
+    public static TypeAdapter<Job> typeAdapter(Gson gson) {
+        return new AutoValue_Job.GsonTypeAdapter(gson);
     }
 
     private static int nextId = 0;

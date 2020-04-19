@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
 @AnyThread // NOTE: I don't care to tighten the critical section (records) as getLoad() should be pretty fast
 class LoadTracker {
 
-    @GuardedBy("this")
+    @GuardedBy(who = "this")
     private val records = LinkedList<Record>()
     private var lastClick = 0L
 
@@ -77,14 +77,15 @@ class LoadTracker {
      * A common function to perform a click.
      */
     private fun click(type: Record.Type) {
-        // Add the elapsed time to the most recent record, as clicking signals both the start and end of something
-        val elapsed = System.nanoTime() - lastClick
-        records.first?.addTime(elapsed) // This is an optimization to keep records small
-
         // If the types mismatch, add a new record of length 0
         if (type != records.firstOrNull()?.type) {
             records.addFirst(Record(type))
         }
+
+        // Add the elapsed time to the most recent record
+        val elapsed = System.nanoTime() - lastClick
+        records.firstOrNull()?.addTime(elapsed) // This is an optimization to keep records small
+
         // Record the click time
         lastClick = System.nanoTime()
     }
@@ -104,18 +105,10 @@ class LoadTracker {
         } else {
             TimeUnit.SECONDS.toNanos(seconds.toLong())
         }
-        val elapsed = System.nanoTime() - lastClick
 
         // The time elapsed since the last clock should be of the same type as the most recent block
         var totalTime = 0L
         var workTime = 0L
-
-        if (!done) {
-            totalTime = getDeltaWithCap(0, elapsed, cap)
-            if (records.first.type == Record.Type.WORK) {
-                workTime += totalTime
-            }
-        }
 
         // Gather the total and work times off of the record keeping in mind the cap
         for (record in records) {

@@ -80,7 +80,8 @@ class NodeController(private val port: Int?) {
 
             // Let's not leak the socket outside of the thread
             val nodes = nodeCollector?.awaitAndGet()
-            socket.sendAndClose(Message.create(NodesSpawned.create(nodes)))
+            Logger.i("Spun up nodes: $nodes")
+            socket.send(Message.create(NodesSpawned.create(nodes)))
         }
 
         message.killNodes()?.let { _ ->
@@ -101,6 +102,7 @@ class NodeController(private val port: Int?) {
         message.nodeOnline()?.let { response ->
             Logger.d("Received a node online notice, working: ${nodeCollector.isWorking()}")
             nodeCollector?.handleResponse(response)
+            socket.close()
         }
     }
 
@@ -116,7 +118,7 @@ class NodeController(private val port: Int?) {
     @AnyThread
     class NodeCollector(private val ipAddress: String, nodeCount: Int): BaseCollector<List<NodeInfo>>(nodeCount) {
 
-        @GuardedBy("this")
+        @GuardedBy(who = "this")
         private val nodes = mutableListOf<NodeInfo>()
 
         /**
@@ -124,7 +126,7 @@ class NodeController(private val port: Int?) {
          */
         fun handleResponse(nodeOnline: NodeOnline) {
             synchronized(this) {
-                nodes.add(NodeInfo.create(ipAddress, nodeOnline.port()))
+                nodes.add(NodeInfo.create("localhost", nodeOnline.port()))
             }
             countDown()
         }

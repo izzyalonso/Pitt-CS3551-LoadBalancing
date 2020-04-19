@@ -23,6 +23,8 @@ fun getIpAddress() = URL("http://checkip.amazonaws.com/").bufferedReader().use {
 }
 
 fun Socket.send(message: Message) = printWriter().println(message.toJson())
+// Send and close closes before the other side gets to read the message.
+// This is obv no bueno, but I'm keeping it around cause I'm curious.
 fun Socket.sendAndClose(message: Message) = printWriter().use { writer ->
     writer.println(message)
 }

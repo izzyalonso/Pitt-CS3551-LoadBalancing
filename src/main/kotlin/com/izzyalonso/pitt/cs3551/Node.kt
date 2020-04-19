@@ -6,33 +6,38 @@ import com.izzyalonso.pitt.cs3551.model.*
 import com.izzyalonso.pitt.cs3551.model.commands.BuildHierarchy
 import com.izzyalonso.pitt.cs3551.model.notices.NodeOnline
 import com.izzyalonso.pitt.cs3551.net.*
+import com.izzyalonso.pitt.cs3551.util.ConditionLock
+import com.izzyalonso.pitt.cs3551.util.Logger
 import com.izzyalonso.pitt.cs3551.util.MappingCollector
 import java.lang.Integer.min
 import java.net.Socket
 import java.util.*
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.NoSuchElementException
 import kotlin.math.abs
+import kotlin.math.max
 
 private const val imbalanceThreshold = 0.1
 
 class Node {
-    @GuardedBy("this")
+    @GuardedBy(who = "this")
     private val queue = LinkedList<Job>()
     private val running = AtomicBoolean(false)
+    private val hierarchySet = AtomicBoolean(false)
     private val balancing = AtomicBoolean(false)
 
     private val workLock = Object()
 
-    private lateinit var thisNode: NodeInfo
+    lateinit var thisNode: NodeInfo
     // The hierarchy this node is in charge of
     private lateinit var hierarchy: TreeNode
 
     // Maps a node to a level; this node's children are at level 0
-    @GuardedBy("this") // <- also readonly
+    @GuardedBy(who = "this") // <- also readonly
     private lateinit var nodeLevelMap: Map<NodeInfo, Int>
     // List of levels mapping node to load
-    @GuardedBy("this") // <- includes all the maps as well
+    @GuardedBy(who = "this") // <- includes all the maps as well
     private lateinit var levelLoads: List<MutableMap<NodeInfo, Double>>
     // This node's load, good to cache
     private var currentLoad = 0.0
@@ -48,12 +53,13 @@ class Node {
         try {
             startInternal()
         } catch (x: Exception) {
-            sendLog("$thisNode failed: $${x.message}")
+            sendLog("Some node failed: $${x}")
+            Thread.sleep(2000)
         }
     }
 
     private fun startInternal() {
-        println("Starting node.")
+        sendLog("Starting node.")
         running.set(true)
 
         loadTracker = LoadTracker()
@@ -61,17 +67,25 @@ class Node {
         val controllerPort = System.getenv()[NodeController.ENV_CONTROLLER_PORT]?.toInt()
         if (controllerPort == null) {
             println("Environment variable ${NodeController.ENV_CONTROLLER_PORT} needs to be set.")
-            return
         }
 
+        sendLog("Controller at $controllerPort")
+
+        val connectedLatch = CountDownLatch(1)
         ServerSocketInterface(object: ServerSocketInterface.ListenerAdapter() {
             override fun onConnected(port: Int) {
                 // It's good to know who we are
-                thisNode = NodeInfo.create("localnode", port)
+                thisNode = NodeInfo.create("localhost", port)
+
+                Logger.i("Node connected at $thisNode")
+                sendLog("Node connected at $thisNode")
 
                 // Notify the Controller the Node is ready
                 // The node's controller will always be in localhost
-                send(Message.create(NodeOnline.create(port)), "localhost", controllerPort)
+                if (controllerPort != null) {
+                    sendAsync(Message.create(NodeOnline.create(port)), "localhost", controllerPort)
+                }
+                connectedLatch.countDown()
             }
 
             override fun onMessageReceived(message: Message, socket: Socket) {
@@ -83,10 +97,20 @@ class Node {
             }
         }).startListeningAsync()
 
+        // Wait til we're connected
+        connectedLatch.await()
+        // And wait until we got a hierarchy
+        sendLog("$thisNode waiting for hierarchy")
+        ConditionLock {
+            hierarchySet.get()
+        }.await()
+        sendLog("$thisNode has a hierarchy")
+
         while (running.get()) {
+            //sendLog("$thisNode is running")
             // Should prolly make this a monitored lock instead ¯\_(ツ)_/¯
             // Oh well, worst case scenario we lose 50 ms
-            while (!balancing.get()) {
+            while (balancing.get()) {
                 try {
                     Thread.sleep(50)
                 } catch (Ix: InterruptedException) {
@@ -102,11 +126,13 @@ class Node {
 
             // Work or sleep
             if (work == null) {
+                sendLog("$thisNode is going to sleep")
                 loadTracker.startSleep()
                 synchronized(workLock) {
                     workLock.wait(250) // Go to sleep
                 }
                 loadTracker.endSleep()
+                sendLog("$thisNode woke up")
             } else {
                 loadTracker.startWork()
                 doWork(work) // Execute the request
@@ -116,7 +142,7 @@ class Node {
 
             // Get the load over the last two seconds
             currentLoad = loadTracker.getLoad(2)
-            sendLog("$thisNode current load: $currentLoad")
+            //sendLog("$thisNode current load: $currentLoad")
 
             val highestLevelLoads = highestLevelChildrenLoads()
 
@@ -176,7 +202,7 @@ class Node {
     private fun runFibo(nth: Int): Int {
         var f1 = 0
         var f2 = 1
-        repeat(min(nth-2, 0)) {
+        repeat(max(nth-2, 0)) {
             val tmp = f1+f2
             f1 = f2
             f2 = tmp
@@ -363,35 +389,38 @@ class Node {
     @VisibleForInnerAccess
     internal fun handleMessage(message: Message, socket: Socket) {
         message.buildHierarchy()?.let { request ->
-            hierarchy = buildHierarchy(request)
-
-            buildInternalMappings(hierarchy)
-            // Let other nodes know
-            communicateHierarchy(hierarchy)
-
-            socket.sendAndClose(Message.create(hierarchy))
+            sendLog("$thisNode is building the hierarchy.")
+            hierarchy = buildHierarchyOp(request)
+            hierarchySet.set(true)
+            socket.send(Message.create(hierarchy))
         }
 
         message.hierarchy()?.let { hierarchy ->
-            this.hierarchy = hierarchy
+            sendLog("$thisNode just got its hierarchy: $hierarchy")
             buildInternalMappings(hierarchy)
             communicateHierarchy(hierarchy)
+            this.hierarchy = hierarchy
+            hierarchySet.set(true)
+            socket.close()
         }
 
         message.doWork()?.let { request ->
+            //sendLog("$thisNode got a work request: $request")
             synchronized(this) {
                 queue.add(request)
             }
             synchronized(workLock) {
                 workLock.notify()
             }
+            socket.close()
         }
 
-        message.loadInfo()?.let { request ->
-            val node = request.node()
+        message.loadInfo()?.let { update ->
+            sendLog("$thisNode got a load update: $update")
+            val node = update.node()
             synchronized(this) {
                 nodeLevelMap[node]?.let { level ->
-                    levelLoads[level][node] = request.load()
+                    levelLoads[level][node] = update.load()
                 } // ?: throw(something went wrong)
             }
         }
@@ -423,10 +452,20 @@ class Node {
         }
     }
 
+    fun buildHierarchyOp(request: BuildHierarchy): TreeNode {
+        val hierarchy = buildHierarchy(request)
+        sendLog("$thisNode built the hierarchy: $hierarchy")
+        buildInternalMappings(hierarchy)
+        // Let other nodes know
+        communicateHierarchy(hierarchy)
+
+        return hierarchy
+    }
+
     /**
      * A bit haphazard IMO. Could be better, but works.
      */
-    fun buildHierarchy(request: BuildHierarchy): TreeNode {
+    private fun buildHierarchy(request: BuildHierarchy): TreeNode {
         // Create a list of leaves
         val leaves = LinkedList<TreeNode>()
         request.nodes().forEach {
@@ -486,6 +525,7 @@ class Node {
         hierarchy.bfsOnOwned { treeNode, _, _ ->
             val node = treeNode.node()
             if (node != thisNode) {
+                sendLog("$thisNode is sending hierarchy to $node")
                 sendAsync(Message.create(treeNode), node.address(), node.port())
             }
         }
@@ -615,7 +655,7 @@ class Node {
             // For every node
             currentNode.children().forEach {
                 // replace current if self
-                if (it == thisNode) {
+                if (it.node() == thisNode) {
                     currentNode = it
                 }
                 // Call action and reset level change to false
@@ -725,6 +765,22 @@ class TransferContainer(val node: NodeInfo, jobs: List<JobInfo>): Comparable<Tra
 
 
 fun main() {
+    hierarchyTest()
+}
+
+fun hierarchyTest() {
+    val nodes = mutableListOf<NodeInfo>()
+    for (i in 0 until 4) {
+        nodes.add((NodeInfo.create("node", i)))
+    }
+
+    val node = Node()
+    node.thisNode = nodes[0]
+    val hierarchy = node.buildHierarchyOp(BuildHierarchy.create(2, nodes))
+    println(hierarchy.toJson())
+}
+
+fun loadBalanceTest() {
     val jobsPerNode = mutableMapOf<NodeInfo, List<JobInfo>>()
     for (i in 0 until 4) {
         val node = NodeInfo.create("node", i)
@@ -744,13 +800,4 @@ fun main() {
 
     println(jobsPerNode)
     println(transfers)
-}
-
-fun hierarchyTest() {
-    val nodes = mutableListOf<NodeInfo>()
-    for (i in 0 until 4) {
-        nodes.add((NodeInfo.create("node", i)))
-    }
-
-    println(Node().buildHierarchy(BuildHierarchy.create(2, nodes)).toJson())
 }

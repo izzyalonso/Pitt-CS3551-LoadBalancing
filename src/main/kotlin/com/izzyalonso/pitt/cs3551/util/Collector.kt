@@ -22,7 +22,7 @@ abstract class BaseCollector<T>(count: Int) {
 @AnyThread
 class Collector<T>(count: Int) {
     private val latch = CountDownLatch(count)
-    @GuardedBy("this")
+    @GuardedBy(who = "this")
     private val items = mutableListOf<T>()
 
     fun isWorking() = latch.count != 0L
@@ -51,7 +51,7 @@ fun <T>Collector<T>?.isWorking() = this?.isWorking() ?: false
 @AnyThread
 class MappingCollector<K, V>(count: Int) {
     private val latch = CountDownLatch(count)
-    @GuardedBy("this")
+    @GuardedBy(who = "this")
     private val items = mutableMapOf<K, V>()
 
     fun isWorking() = latch.count != 0L
