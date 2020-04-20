@@ -33,6 +33,10 @@ fun sendLog(message: String) {
     sendAsync(Message.create(message), "localhost", logNodePort)
 }
 
+fun sendLogSync(message: String) {
+    send(Message.create(message), "localhost", logNodePort)
+}
+
 /**
  * Sends a [message] to a machine at the provided [address] and [port] asynchronously. Optionally, you can register
  * a [callback] to get notified iff and when the recipient sends a response.

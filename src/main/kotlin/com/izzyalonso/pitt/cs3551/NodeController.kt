@@ -74,6 +74,7 @@ class NodeController(private val port: Int?) {
                 val builder = ProcessBuilder("java", "-jar", "lb.jar", "-n")
                 val environment = builder.environment()
                 environment[ENV_CONTROLLER_PORT] = (port ?: DEFAULT_PORT).toString()
+                environment[ENV_NODE_ID] = i.toString()
                 val process = builder.start()
                 nodeProcesses.add(process)
             }
@@ -110,6 +111,7 @@ class NodeController(private val port: Int?) {
         const val DEFAULT_PORT = 35991
 
         const val ENV_CONTROLLER_PORT = "LB_CONTROLLER_PORT"
+        const val ENV_NODE_ID = "LB_NODE_ID"
     }
 
     /**
@@ -126,7 +128,7 @@ class NodeController(private val port: Int?) {
          */
         fun handleResponse(nodeOnline: NodeOnline) {
             synchronized(this) {
-                nodes.add(NodeInfo.create("localhost", nodeOnline.port()))
+                nodes.add(NodeInfo.create(nodeOnline.id(), "localhost", nodeOnline.port()))
             }
             countDown()
         }

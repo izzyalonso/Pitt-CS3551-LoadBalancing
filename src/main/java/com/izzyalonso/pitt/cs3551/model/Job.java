@@ -13,16 +13,16 @@ public abstract class Job extends JsonConvertible {
     public abstract int input();
 
 
-    int weight() {
+    long weight() {
         switch (type()) {
             case FIBONACCI:
-                return input();
+                return input()-1;
 
             case ERATOSTHENES:
-                return (int)Math.ceil(input()*Math.log(input()));
+                return (long)Math.ceil(input()*Math.log(input()));
 
             case SQUARE_SUM:
-                return input()*input();
+                return input();
 
             default:
                 return 0; // Not a thing, type is enum.

@@ -9,13 +9,13 @@ import org.jetbrains.annotations.NotNull;
 @AutoValue
 public abstract class JobInfo extends JsonConvertible implements Comparable<JobInfo> {
     public abstract int jobId();
-    public abstract int weight();
+    public abstract long weight();
     public abstract NodeInfo owner();
 
     @Override
     public int compareTo(@NotNull JobInfo other) {
         // Reverse order, heaviest first
-        return Integer.compare(other.weight(), weight());
+        return Long.compare(other.weight(), weight());
     }
 
     public static JobInfo create(@NonNull Job job, @NonNull NodeInfo owner) {

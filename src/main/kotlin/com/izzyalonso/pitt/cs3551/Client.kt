@@ -5,6 +5,7 @@ import com.izzyalonso.pitt.cs3551.annotation.GuardedBy
 import com.izzyalonso.pitt.cs3551.model.Job
 import com.izzyalonso.pitt.cs3551.model.Message
 import com.izzyalonso.pitt.cs3551.model.NodeInfo
+import com.izzyalonso.pitt.cs3551.model.TreeNode
 import com.izzyalonso.pitt.cs3551.model.commands.BuildHierarchy
 import com.izzyalonso.pitt.cs3551.model.commands.controller.KillNodes
 import com.izzyalonso.pitt.cs3551.model.commands.controller.SpinUpNodes
@@ -31,8 +32,7 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
             Logger.i("Sending spin up command to controller: $it")
             sendAsync(spinUpCommand, it.address(), it.port(), nodeCollector)
         }
-        val nodes = nodeCollector.awaitAndGet()//.toMutableList()
-        //nodes.add(NodeInfo.create("localhost", 51768))
+        val nodes = nodeCollector.awaitAndGet().sorted()
 
         // Validation
         if (nodes.isEmpty()) {
@@ -46,10 +46,12 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
         Logger.i("Building node hierarchy")
         val message = Message.create(BuildHierarchy.create(branchingFactor, nodes))
         val hierarchy = send(message, nodes[0].address(), nodes[0].port())
-        Logger.i(hierarchy?.hierarchy())
+        hierarchy?.hierarchy()?.let {
+            printHierarchy(it)
+        } ?: Logger.i("No Hierarchy")
 
         // Wait for a few seconds
-        Thread.sleep(5000)
+        Thread.sleep(2000)
 
         val workloadController = WorkloadController(nodes)
         workloadController.start()
@@ -71,6 +73,17 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
         teardown()
     }
 
+    private fun printHierarchy(root: TreeNode, prepend: String = "") {
+        Logger.i("${prepend}${root.node()}")
+        Logger.i("${prepend}Parent: ${root.parent()}")
+        if (!root.isLeaf) {
+            Logger.i("${prepend}Children:")
+            root.children().forEach {
+                printHierarchy(it, "${prepend}\t")
+            }
+        }
+    }
+
     private fun teardown(message: String? = null) {
         message?.let { Logger.i(it) }
 
@@ -84,20 +97,20 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
     class WorkloadController(private val nodes: List<NodeInfo>) {
         private var running = AtomicBoolean(false)
         // How often to assign jobs
-        var periodicity = AtomicInteger(50)
+        var periodicity = AtomicInteger(100)
         // How big the jobs inputs should be; quadratic for effect
-        var jobSize = AtomicInteger(6000)
+        var jobSize = AtomicInteger(10)
         // Job size variability; plus or minus half after squaring
-        var variability = AtomicInteger(1000)
+        var variability = AtomicInteger(2)
 
         fun start() {
             Thread {
                 running.set(true)
                 while (running.get()) {
-                    val node = nodes[Random.nextInt(nodes.size)]
-                    val job = Job.create(Job.Type.values().random(), getSize())
+                    val node = nodes[listOf(0, 2).random()] // Add a skew
+                    val job = Job.create(Job.Type.SQUARE_SUM, getSize())
                     val message = Message.create(job)
-                    //sendLog("Sending $message to $node")
+                    //Logger.i("Sending $message to $node")
                     sendAsync(message, node.address(), node.port())
                     Thread.sleep(periodicity.get().toLong())
                 }
@@ -105,7 +118,7 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
         }
 
         private fun getSize(): Int {
-            return jobSize.get()*jobSize.get() + Random.nextInt(variability.get()) - variability.get()
+            return periodicity.get()*3 + Random.nextInt(periodicity.get())
         }
 
         fun stop() {

@@ -13,6 +13,8 @@ import com.izzyalonso.pitt.cs3551.model.notices.NodeOnline;
 import com.izzyalonso.pitt.cs3551.model.notices.NodesSpawned;
 import com.izzyalonso.pitt.cs3551.model.notices.ResponseMessage;
 
+import java.util.List;
+
 @AutoValue
 public abstract class Message extends JsonConvertible {
     // Messages for the node controller
@@ -37,6 +39,8 @@ public abstract class Message extends JsonConvertible {
     public abstract boolean collectJobs(); // Default to false when using the builder
     @Nullable public abstract JobInfoList jobInfoList();
     @Nullable public abstract LoadBalancingResult loadBalancingResult();
+    @Nullable public abstract List<JobTransfer> jobTransfer();
+    @Nullable public abstract List<Job> jobs();
 
     @Nullable public abstract String log();
 
@@ -97,6 +101,14 @@ public abstract class Message extends JsonConvertible {
         return builder().loadBalancingResult(loadBalancingResult).build();
     }
 
+    public static Message createJobTransferRequest(@NonNull List<JobTransfer> jobTransfer) {
+        return builder().jobTransfer(jobTransfer).build();
+    }
+
+    public static Message create(@NonNull List<Job> jobs) {
+        return builder().jobs(jobs).build();
+    }
+
     public static Message create(@NonNull String log) {
         return builder().log(log).build();
     }
@@ -137,6 +149,8 @@ public abstract class Message extends JsonConvertible {
         abstract Builder collectJobs(boolean collectJobs);
         abstract Builder jobInfoList(@Nullable JobInfoList jobInfoList);
         abstract Builder loadBalancingResult(@Nullable LoadBalancingResult loadBalancingResult);
+        abstract Builder jobTransfer(@Nullable List<JobTransfer> jobTransfer);
+        abstract Builder jobs(@Nullable List<Job> jobs);
 
         abstract Builder log(@Nullable String log);
 
