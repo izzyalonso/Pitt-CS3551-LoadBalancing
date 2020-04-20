@@ -55,6 +55,7 @@ class MappingCollector<K, V>(count: Int) {
     private val items = mutableMapOf<K, V>()
 
     fun isWorking() = latch.count != 0L
+    fun count() = latch.count
     fun add(key: K, value: V) {
         if (!isWorking()) {
             return

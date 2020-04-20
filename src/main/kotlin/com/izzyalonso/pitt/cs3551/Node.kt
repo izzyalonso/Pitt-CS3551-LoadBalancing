@@ -92,7 +92,7 @@ class Node {
                 sendLog("Node connected at $thisNode")
 
                 // Notify the Controller the Node is ready
-                // The node's controller will always be in localhost
+                // The node's controller will always be in localhostç
                 if (controllerPort != null) {
                     sendAsync(Message.create(NodeOnline.create(nodeId, port)), "localhost", controllerPort)
                 }
@@ -123,6 +123,9 @@ class Node {
             //sendLog("$thisNode is running, queue size: ${queue.size}")
             // Should prolly make this a monitored lock instead ¯\_(ツ)_/¯
             // Oh well, worst case scenario we lose 50 ms
+            if (balancing.get()) {
+                sendLog("NODE $thisNode WAITING FOR BALANCING TO BE OVER")
+            }
             while (balancing.get()) {
                 try {
                     Thread.sleep(50)
@@ -194,15 +197,17 @@ class Node {
                     }
 
                     transfersPerNode.forEach {
-                        sendLog("$it")
+                        sendLog("EXECUTOR's RESULT: $it")
                     }
 
                     transfersPerNode.forEach { (node, transfers) ->
                         if (node != thisNode) {
-                            send(Message.create(LoadBalancingResult.create(transfers)), node.address(), node.port())
+                            sendAsync(Message.create(LoadBalancingResult.create(transfers)), node.address(), node.port())
                         }
                     }
                     propagatedLoadBalancingOperation(transfersPerNode[thisNode]!!, 1)
+
+                    lastBalanceOp.set(System.currentTimeMillis())
                 }
             } else {
                 // Communicate subtree's load to parent
@@ -493,39 +498,17 @@ class Node {
 
         // This message is only received at the top level, so we can work backwards down the hierarchy
         message.loadBalancingResult()?.let {
-            sendLog("Got my result: $it")
+            sendLog("$thisNode got result: $it")
             if (hierarchy.isLeaf) {
                 // Find me jobs and get oot of balancing mode
-                if (it.jobTransfers().isEmpty()) {
-                    balancing.set(false)
-                } else {
-                    val requestMap = mutableMapOf<NodeInfo, MutableList<JobTransfer>>()
-                    val outbound = mutableSetOf<NodeInfo>()
-                    it.jobTransfers().forEach { transfer ->
-                        if (transfer.donor() == thisNode) {
-                            outbound.add(transfer.donor())
-                        } else if (transfer.recipient() == thisNode) {
-                            requestMap.putIntoList(transfer.donor(), transfer)
-                        }
-                    }
-                    operationsToResume.addAndGet(outbound.size+requestMap.size)
-
-                    requestMap.forEach { (donor, transfers) ->
-                        val response = send(Message.createJobTransferRequest(transfers), donor.address(), donor.port())
-                        response?.jobs()?.let {
-                            synchronized(this) {
-                                queue.addAll(it)
-                            }
-                        }
-                        balancing.set(operationsToResume.decrementAndGet() == 0)
-                    }
-                }
+                fetchMyJobs(it.jobTransfers())
             } else {
                 propagatedLoadBalancingOperation(message.loadBalancingResult().jobTransfers(), 0)
             }
         }
 
         message.jobTransfer()?.let { transferRequest ->
+            sendLog("$thisNode just got a transfer request $transferRequest")
             val jobIdSet = mutableSetOf<Int>()
             transferRequest.forEach {
                 jobIdSet.add(it.job().jobId())
@@ -542,7 +525,6 @@ class Node {
                 jobs
             }
             socket.send(Message.create(jobs))
-            balancing.set(operationsToResume.decrementAndGet() == 0)
         }
     }
 
@@ -629,6 +611,11 @@ class Node {
      * As it propagates down the hierarchy.
      */
     private fun propagatedLoadBalancingOperation(transfers: List<JobTransfer>, round: Int) {
+        if (round == jobCollectors.size) {
+            fetchMyJobs(transfers)
+            return
+        }
+
         // Need to factor in transfer decisions into the next round
         // Separate donated from received
         // We need to be able to look up the blacklist quickly
@@ -636,6 +623,8 @@ class Node {
         val jobsDonated = mutableListOf<JobTransfer>() // Deaggregated
         // We also need to keep a map of received to redistribute
         val jobsReceived = mutableListOf<JobTransfer>()
+
+        //sendLog("$thisNode, $round jobNodeMapping: ${jobNodeMapping[round]}")
         transfers.forEach {
             if (it.donor() == thisNode) {
                 val deaggregated = it.replacing(thisNode, jobNodeMapping[round][it.job()]) // And deaggregate while we're at it
@@ -649,23 +638,30 @@ class Node {
             }
         }
 
+        //sendLog("$thisNode, $round donated: $jobsDonated")
+        //sendLog("$thisNode, $round received: $jobsReceived")
+
         // Original jobs per node
+        //sendLog("$thisNode, $round collector's count: ${jobCollectors[round].count()}")
         val jobsPerNodeAtCollectTime = jobCollectors[round].awaitAndGet() // <- the condition has already been met, there is no waiting
+        //sendLog("$thisNode, $round jpn at ct: $jobsPerNodeAtCollectTime")
         // New map we're constructing
-        val jobsPerNode = mutableMapOf<NodeInfo, MutableList<JobInfo>>()
+        val jobsPerChildPostOutbound = mutableMapOf<NodeInfo, MutableList<JobInfo>>()
         // Remove donated objects (or rather, don't include them)
         jobsPerNodeAtCollectTime.forEach { entry ->
-            jobsPerNode[entry.key] = mutableListOf()
+            jobsPerChildPostOutbound[entry.key] = mutableListOf()
             entry.value.forEach {
                 if (jobBlacklistPerNode[entry.key]?.contains(it) == true) {
-                    jobsPerNode[entry.key]?.add(it)
+                    jobsPerChildPostOutbound[entry.key]?.add(it)
                 }
             }
         }
 
+        //sendLog("$thisNode, $round jobs per child: $jobsPerChildPostOutbound")
+
         // Create transfer containers
         val transferContainers = LinkedList<TransferContainer>()
-        jobsPerNode.entries.forEach {
+        jobsPerChildPostOutbound.entries.forEach {
             transferContainers.add(TransferContainer(it.key, it.value))
         }
         transferContainers.sort()
@@ -679,35 +675,88 @@ class Node {
             transferContainers.sort() // Won't be a billion containers, just 2 - 4
         }
 
+        //sendLog("$thisNode, $round reassigned: $reassignedJobs")
+
         val finalPreTransferContainers = LinkedList<TransferContainer>()
         transferContainers.forEach {
             finalPreTransferContainers.add(it.collapsed())
         }
 
-        val levelTransfers = loadBalance(finalPreTransferContainers)
+        val levelTransfers = mutableMapOf<JobInfo, JobTransfer>()
+        loadBalance(finalPreTransferContainers).forEach {
+            levelTransfers[it.job()] = it
+        }
+        //sendLog("$thisNode, $round level transfers: $levelTransfers")
 
-        // If reassigned, remove
-        levelTransfers.forEach {
-            reassignedJobs.remove(it.job())
+        // If both reassigned and transferred within a level
+        val removeSet = mutableSetOf<JobInfo>()
+        reassignedJobs.forEach { reassignedEntry ->
+            levelTransfers[reassignedEntry.key]?.let { internalTransfer ->
+                val originalRecipient = reassignedEntry.value.recipient()
+                val newRecipient = internalTransfer.recipient()
+                levelTransfers[reassignedEntry.key] = reassignedEntry.value.replacing(originalRecipient, newRecipient)
+                removeSet.add(reassignedEntry.key)
+            }
         }
+        removeSet.forEach {
+            reassignedJobs.remove(it)
+        }
+
+        val finalList = mutableListOf<JobTransfer>()
         reassignedJobs.values.forEach {
-            levelTransfers.add(it)
+            finalList.add(it)
         }
-        levelTransfers.addAll(jobsDonated)
+        levelTransfers.values.forEach {
+            finalList.add(it)
+        }
+        finalList.addAll(jobsDonated)
+        //sendLog("$thisNode, $round final list: $finalList")
 
         val transfersPerNode = mutableMapOf<NodeInfo, MutableList<JobTransfer>>()
-        for (node in jobsPerNode.keys) {
+        for (node in jobsPerChildPostOutbound.keys) {
             transfersPerNode[node] = mutableListOf()
         }
-        for (transfer in levelTransfers) {
+        for (transfer in finalList) {
             transfersPerNode[transfer.donor()]?.add(transfer)
             transfersPerNode[transfer.recipient()]?.add(transfer)
         }
 
-        if (round == jobCollectors.size-1) {
-            // Find my jobs
+        transfersPerNode.forEach { (node, transfers) ->
+            //sendLog("$thisNode, $round transfers for $node: $transfers")
+            if (node != thisNode) {
+                sendAsync(Message.create(LoadBalancingResult.create(transfers)), node.address(), node.port())
+            }
+        }
+        propagatedLoadBalancingOperation(transfersPerNode[thisNode]!!, round+1)
+    }
+
+    private fun fetchMyJobs(transfers: List<JobTransfer>) {
+        sendLog("NODE $thisNode IS FETCHING: $transfers")
+        if (transfers.isEmpty()) {
+            balancing.set(false)
         } else {
-            propagatedLoadBalancingOperation(levelTransfers, round+1)
+            val requestMap = mutableMapOf<NodeInfo, MutableList<JobTransfer>>()
+            transfers.forEach { transfer ->
+                if (transfer.recipient() == thisNode) {
+                    requestMap.putIntoList(transfer.job().owner(), transfer)
+                }
+            }
+            sendLog("NODE $thisNode request map $requestMap")
+            sendLog("NODE $thisNode ORIGINAL OPS ${operationsToResume.addAndGet(requestMap.size)}")
+
+            requestMap.forEach { (owner, transfers) ->
+                sendLog("NODE $thisNode requesting $transfers from $owner")
+
+                // Synchronous cause deadlines
+                val response = send(Message.createJobTransferRequest(transfers), owner.address(), owner.port())
+                response?.jobs()?.let {
+                    synchronized(this) {
+                        queue.addAll(it)
+                    }
+                }
+                balancing.set(operationsToResume.decrementAndGet() != 0)
+                sendLog("NODE $thisNode NEW OPS ${operationsToResume.get()}")
+            }
         }
     }
 
