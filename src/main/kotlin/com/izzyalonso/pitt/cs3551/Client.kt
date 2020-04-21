@@ -27,7 +27,7 @@ class Client(private val controllers: List<NodeInfo>, private val branchingFacto
         // Spin up the nodes
         Logger.i("Controller count: ${controllers.size}")
         val nodeCollector = NodeCollector(controllers.size)
-        val spinUpCommand = Message.create(SpinUpNodes.create(4))
+        val spinUpCommand = Message.create(SpinUpNodes.create(8))
         controllers.forEach {
             Logger.i("Sending spin up command to controller: $it")
             sendAsync(spinUpCommand, it.address(), it.port(), nodeCollector)
